@@ -20,7 +20,8 @@ export const STORAGE_KEYS = {
   SETTINGS: 'fb_ads_app_settings',
   SEARCH_LOGS: 'fb_ads_search_logs',
   CURRENT_USER: 'fb_ads_current_user',
-  SEARCH_HISTORY: 'fb_ads_local_search_history'
+  SEARCH_HISTORY: 'fb_ads_local_search_history',
+  USERS: 'fb_ads_registered_users'
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
