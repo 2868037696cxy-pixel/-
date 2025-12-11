@@ -1,11 +1,12 @@
+
 import { UserAccount, UserProfile } from "../types";
 import { STORAGE_KEYS } from "../constants";
 
 // Mock Database of users
 const MOCK_USERS: UserAccount[] = [
   {
-    username: 'admin',
-    password: 'admin123', // Demo password
+    username: '2868037696',
+    password: 'aa520520', 
     name: '超级管理员',
     role: 'admin'
   },

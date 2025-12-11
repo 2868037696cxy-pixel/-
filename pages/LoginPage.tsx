@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { login } from '../services/authService';
 import { ShieldCheck, Lock, User, LogIn, AlertCircle } from 'lucide-react';
@@ -24,7 +25,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       if (user) {
         onLoginSuccess(user);
       } else {
-        setError('用户名或密码错误。默认账号: admin / admin123 或 operator / 123456');
+        setError('用户名或密码错误。');
         setLoading(false);
       }
     }, 600);
@@ -129,17 +130,17 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
               </div>
               <div className="relative flex justify-center text-sm">
                 <span className="px-2 bg-white text-gray-500">
-                  测试账号
+                  演示账号
                 </span>
               </div>
             </div>
 
-            <div className="mt-6 grid grid-cols-2 gap-3">
+            <div className="mt-6 grid grid-cols-1 gap-3">
               <div className="text-xs text-center p-2 bg-gray-50 rounded text-gray-600">
-                <span className="font-bold">Admin:</span> admin / admin123
+                <span className="font-bold">管理员 (Admin):</span> 2868037696 / aa520520
               </div>
               <div className="text-xs text-center p-2 bg-gray-50 rounded text-gray-600">
-                <span className="font-bold">User:</span> operator / 123456
+                <span className="font-bold">普通用户 (User):</span> operator / 123456
               </div>
             </div>
           </div>
