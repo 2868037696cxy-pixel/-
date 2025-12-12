@@ -21,7 +21,8 @@ export const STORAGE_KEYS = {
   SEARCH_LOGS: 'fb_ads_search_logs',
   CURRENT_USER: 'fb_ads_current_user',
   SEARCH_HISTORY: 'fb_ads_local_search_history',
-  USERS: 'fb_ads_registered_users'
+  USERS: 'fb_ads_registered_users',
+  LAST_SESSION: 'fb_ads_last_session_data'
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {

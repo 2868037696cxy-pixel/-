@@ -1,5 +1,5 @@
 
-import { SearchLog, UserProfile, SearchHistoryItem, SearchFilters } from "../types";
+import { SearchLog, UserProfile, SearchHistoryItem, SearchFilters, Ad } from "../types";
 import { STORAGE_KEYS } from "../constants";
 
 // Get all logs
@@ -90,4 +90,56 @@ export const saveLocalSearchHistory = (keyword: string, filters: SearchFilters):
   } catch (error) {
     console.error("Error saving search history", error);
   }
+};
+
+// --- Session Persistence ("Database" for Ad Results) ---
+
+interface SessionData {
+    keyword: string;
+    ads: Ad[];
+    timestamp: number;
+}
+
+// Save the current ads and keyword for a specific user
+export const saveLastSession = (username: string, ads: Ad[], keyword: string): void => {
+    try {
+        const allSessionsStr = localStorage.getItem(STORAGE_KEYS.LAST_SESSION);
+        let allSessions: Record<string, SessionData> = {};
+        
+        if (allSessionsStr) {
+            allSessions = JSON.parse(allSessionsStr);
+        }
+
+        allSessions[username] = {
+            keyword,
+            ads,
+            timestamp: Date.now()
+        };
+
+        localStorage.setItem(STORAGE_KEYS.LAST_SESSION, JSON.stringify(allSessions));
+    } catch (error) {
+        console.error("Error saving session to DB", error);
+    }
+};
+
+// Retrieve the last session for a specific user
+export const getLastSession = (username: string): { ads: Ad[], keyword: string } | null => {
+    try {
+        const allSessionsStr = localStorage.getItem(STORAGE_KEYS.LAST_SESSION);
+        if (!allSessionsStr) return null;
+
+        const allSessions = JSON.parse(allSessionsStr);
+        const userSession = allSessions[username];
+
+        if (userSession && userSession.ads) {
+            return {
+                ads: userSession.ads,
+                keyword: userSession.keyword || ''
+            };
+        }
+        return null;
+    } catch (error) {
+        console.error("Error retrieving session from DB", error);
+        return null;
+    }
 };
