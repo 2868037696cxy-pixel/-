@@ -125,6 +125,36 @@ const mapApifyItemToAd = (item: any, index: number): Ad => {
     const count = item.ads_count || 1;
     const adLibraryUrl = item.ad_library_url || `https://www.facebook.com/ads/library/?id=${id}`;
 
+    // --- Extract Reach (Impressions) Logic ---
+    let reach: number | undefined = undefined;
+
+    const parseReach = (val: any): number | undefined => {
+        if (typeof val === 'number') return val;
+        if (typeof val === 'string') {
+            const parsed = parseInt(val.replace(/[^0-9]/g, ''), 10);
+            return isNaN(parsed) ? undefined : parsed;
+        }
+        return undefined;
+    };
+
+    // 1. Try EU Transparency Field (Exact number like 348)
+    if (item.snapshot?.eu_total_reach) {
+        reach = parseReach(item.snapshot.eu_total_reach);
+    }
+    
+    // 2. Try Standard Impressions Lower Bound
+    if (reach === undefined && item.snapshot?.impressions?.lower_bound) {
+        reach = parseReach(item.snapshot.impressions.lower_bound);
+    }
+
+    // 3. Fallback to root level fields
+    if (reach === undefined && item.eu_total_reach) {
+        reach = parseReach(item.eu_total_reach);
+    }
+    if (reach === undefined && item.impressions?.lower_bound) {
+        reach = parseReach(item.impressions.lower_bound);
+    }
+
     return {
       id,
       advertiserName,
@@ -140,7 +170,8 @@ const mapApifyItemToAd = (item: any, index: number): Ad => {
       adLibraryUrl,
       count,
       displayLink,
-      headline
+      headline,
+      reach
     };
 };
 
@@ -207,7 +238,7 @@ export const searchAdsWithApify = async (
         throw new Error("网络连接失败。请检查您的网络设置，或是否开启了 VPN/代理导致连接中断。");
     }
     if (error.response?.status === 401 || error.response?.status === 403) {
-        throw new Error("Apify API 令牌无效。");
+        throw new Error("Apify API 令牌无效或过期。请前往“系统设置”更新 Token。");
     }
     throw new Error(error.message || "Apify 搜索请求失败");
   }

@@ -27,9 +27,9 @@ export const STORAGE_KEYS = {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   dataSource: DataSource.GEMINI, 
-  apifyApiToken: 'apify_api_FLrMKmrqYRkoh7gOn19Pea8XUG4Wpz0xBu5v',
+  apifyApiToken: '',
   apifyDatasetId: '', 
   autoAnalyze: false,
-  customGeminiApiKey: 'sk-kyK8SyiKq91HuI1muxzIXe3jHjyMXmhNfSlglZAYw36NPpfY',
+  customGeminiApiKey: '',
   customBaseUrl: 'https://api.vectorengine.ai'
 };

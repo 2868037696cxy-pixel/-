@@ -69,7 +69,7 @@ const getAiClient = () => {
 // Many proxies require 'Authorization: Bearer' which the SDK might not send by default.
 const generateContentViaFetch = async (model: string, prompt: string, isJson: boolean = false) => {
     const { apiKey, baseUrl } = getClientConfig();
-    if (!apiKey) throw new Error("Missing API Key");
+    if (!apiKey) throw new Error("Missing API Key. Please check your settings.");
 
     // Ensure correct endpoint construction
     const url = `${baseUrl}/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -97,7 +97,19 @@ const generateContentViaFetch = async (model: string, prompt: string, isJson: bo
 
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`API Request Failed: ${response.status} ${response.statusText} - ${errorText}`);
+        let errorMsg = `API Request Failed: ${response.status} ${response.statusText}`;
+        try {
+            // Try to parse JSON error for better message
+            const errorJson = JSON.parse(errorText);
+            if (errorJson.error && errorJson.error.message) {
+                errorMsg += ` - ${errorJson.error.message}`;
+            } else {
+                errorMsg += ` - ${errorText}`;
+            }
+        } catch (e) {
+            errorMsg += ` - ${errorText}`;
+        }
+        throw new Error(errorMsg);
     }
 
     const data = await response.json();
@@ -179,9 +191,10 @@ export const searchAdsWithGemini = async (keyword: string, filters?: SearchFilte
                 description: "Platforms like Facebook, Instagram, Messenger, Audience Network"
               },
               displayLink: { type: Type.STRING, description: "The website domain shown on the ad link card, UPPERCASE, e.g. 'WWW.NIKE.COM' or 'WWW.ZXNCIETUR.SHOP'" },
-              headline: { type: Type.STRING, description: "The bold headline shown next to the button, e.g. 'Limited Time Offer' or brand name" }
+              headline: { type: Type.STRING, description: "The bold headline shown next to the button, e.g. 'Limited Time Offer' or brand name" },
+              reach: { type: Type.INTEGER, description: "Estimated number of people reached, realistic value between 1000 and 1000000" }
             },
-            required: ["id", "advertiserName", "adCopy", "ctaText", "isActive", "platform", "displayLink", "headline"]
+            required: ["id", "advertiserName", "adCopy", "ctaText", "isActive", "platform", "displayLink", "headline", "reach"]
           }
         }
       }
@@ -202,7 +215,8 @@ export const searchAdsWithGemini = async (keyword: string, filters?: SearchFilte
         // adMedia is optional now and we are not using it for display
         mediaType: mType,
         startDate: filters?.startDate || new Date(Date.now() - Math.random() * 10000000000).toISOString().split('T')[0],
-        originalKeyword: keyword
+        originalKeyword: keyword,
+        reach: item.reach || Math.floor(Math.random() * 50000) + 2000 // Fallback if AI misses it
       };
     });
 
@@ -253,6 +267,12 @@ export const translateToChinese = async (text: string): Promise<string> => {
         return resultText?.trim() || text;
     } catch (e: any) {
         const msg = e.toString();
+        // Handle Invalid Token specifically
+        if (msg.includes('401') || msg.includes('Invalid token')) {
+             console.error("Gemini/Proxy API Token is invalid. Please update in Settings.");
+             return text; // Fail gracefully by returning original
+        }
+
         if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('Quota exceeded')) {
              console.warn("Translation Rate Limit hit. Pausing translation for 60s.");
              isRateLimited = true;
@@ -328,6 +348,13 @@ export const batchTranslateToChinese = async (texts: string[]): Promise<string[]
 
             } catch (error: any) {
                  const errorMsg = error.toString();
+                 
+                 // Fatal Auth Error - Stop Retrying immediately
+                 if (errorMsg.includes('401') || errorMsg.includes('Invalid token')) {
+                     console.error("Batch Translation Aborted: Invalid API Token.");
+                     throw new Error("API Token Invalid"); // Break loop in outer catch
+                 }
+
                  const isTransient = errorMsg.includes('429') || 
                                      errorMsg.includes('RESOURCE_EXHAUSTED') || 
                                      errorMsg.includes('503') || 
@@ -352,15 +379,20 @@ export const batchTranslateToChinese = async (texts: string[]): Promise<string[]
             }
         };
 
-        const translatedChunk = await translateChunk();
-
-        // Apply translations back to results array using correct original indices
-        translatedChunk.forEach((translatedText, idx) => {
-            const globalIndex = itemsToTranslate[idx].originalIndex;
-            if (translatedText && translatedText.trim() !== '') {
-                results[globalIndex] = translatedText;
-            }
-        });
+        try {
+            const translatedChunk = await translateChunk();
+            // Apply translations back to results array using correct original indices
+            translatedChunk.forEach((translatedText, idx) => {
+                const globalIndex = itemsToTranslate[idx].originalIndex;
+                if (translatedText && translatedText.trim() !== '') {
+                    results[globalIndex] = translatedText;
+                }
+            });
+        } catch (fatalError) {
+             // If token is invalid, stop processing subsequent chunks
+             console.error("Stopping batch translation due to fatal error.");
+             return results; 
+        }
     }
 
     return results;

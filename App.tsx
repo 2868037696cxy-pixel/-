@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import AdSearchPage from './pages/AdSearchPage';
 import ChatWindow from './components/ChatWindow';
@@ -11,14 +11,39 @@ import { getCurrentUser, logout } from './services/authService';
 import { getLastSession, saveLastSession, saveSearchLog, saveLocalSearchHistory } from './services/storageService';
 import { searchAdsWithGemini } from './services/geminiService';
 import { searchAdsWithApify } from './services/apifyService';
-import { Ad, UserProfile, SearchFilters, DataSource } from './types';
+import { Ad, UserProfile, SearchFilters, DataSource, SearchPageState } from './types';
 import { Loader2, Zap } from 'lucide-react';
+
+const INITIAL_SEARCH_STATE: SearchPageState = {
+    isBatchMode: false,
+    inputKeyword: '',
+    filters: {
+        dateRange: 'LAST_30_DAYS',
+        adType: 'all',
+        region: 'ALL',
+        language: 'auto',
+        mediaType: 'ALL',
+        status: 'ACTIVE'
+    },
+    batchKeywords: '',
+    batchResults: [],
+    batchProgress: 0,
+    batchTotal: 0,
+    isBatchLoading: false,
+    groupSize: 10,
+    groupCount: 1,
+    startGroup: 1,
+    concurrency: 5
+};
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('search');
   const [globalAds, setGlobalAds] = useState<Ad[]>([]);
   const [globalKeyword, setGlobalKeyword] = useState('');
   
+  // Hoisted UI State for Search Page
+  const [searchPageState, setSearchPageState] = useState<SearchPageState>(INITIAL_SEARCH_STATE);
+
   // Global Search State (Background Process)
   const [isSearching, setIsSearching] = useState(false);
   const [searchingKeyword, setSearchingKeyword] = useState('');
@@ -34,17 +59,21 @@ const App: React.FC = () => {
     setIsLoadingAuth(false);
   }, []);
 
-  // When user changes (logs in), try to restore their "Database" session
+  // When user changes (logs in), try to restore their session
   useEffect(() => {
     if (currentUser && currentUser.name) {
-        // Try to load previous session data from local "database"
         const sessionData = getLastSession(currentUser.name);
         if (sessionData && sessionData.ads.length > 0) {
             setGlobalAds(sessionData.ads);
             setGlobalKeyword(sessionData.keyword);
+            setSearchPageState(prev => ({
+                ...prev,
+                inputKeyword: sessionData.keyword
+            }));
         } else {
             setGlobalAds([]);
             setGlobalKeyword('');
+            setSearchPageState(INITIAL_SEARCH_STATE);
         }
     }
   }, [currentUser]);
@@ -59,15 +88,15 @@ const App: React.FC = () => {
     setCurrentUser(null);
     setGlobalAds([]);
     setGlobalKeyword('');
+    setSearchPageState(INITIAL_SEARCH_STATE);
     setIsSearching(false);
   };
 
-  // Centralized Search Handler (Supports background execution)
+  // Centralized Search Handler
   const performSearch = async (keyword: string, filters: SearchFilters, dataSource: DataSource, apifyToken: string) => {
       setIsSearching(true);
       setSearchingKeyword(keyword);
       
-      // Save history immediately
       saveLocalSearchHistory(keyword, filters);
 
       try {
@@ -81,10 +110,8 @@ const App: React.FC = () => {
           setGlobalAds(results);
           setGlobalKeyword(keyword);
           
-          // Persist
           if (currentUser && currentUser.name) {
              saveLastSession(currentUser.name, results, keyword);
-             
              saveSearchLog({
                 userId: currentUser.name, 
                 userName: currentUser.name,
@@ -94,7 +121,6 @@ const App: React.FC = () => {
                 filtersUsed: true
               });
           }
-
       } catch (error: any) {
           console.error("Search failed", error);
           alert(`搜索失败: ${error.message}`);
@@ -104,7 +130,6 @@ const App: React.FC = () => {
       }
   };
 
-  // Allow child pages to update ads (e.g. translation)
   const handleUpdateAds = (updatedAds: Ad[]) => {
       setGlobalAds(updatedAds);
       if (currentUser && currentUser.name) {
@@ -112,12 +137,14 @@ const App: React.FC = () => {
       }
   };
 
-  // Auth Loading Screen
+  const handleUpdateSearchPageState = useCallback((updates: Partial<SearchPageState>) => {
+      setSearchPageState(prev => ({ ...prev, ...updates }));
+  }, []);
+
   if (isLoadingAuth) {
     return <div className="min-h-screen bg-gray-50 flex items-center justify-center">Loading...</div>;
   }
 
-  // Login Guard
   if (!currentUser) {
     return <LoginPage onLoginSuccess={handleLoginSuccess} />;
   }
@@ -133,6 +160,8 @@ const App: React.FC = () => {
             isSearching={isSearching}
             onSearch={performSearch}
             currentUser={currentUser}
+            state={searchPageState}
+            onUpdateState={handleUpdateSearchPageState}
           />
         );
       case 'chat': 
@@ -160,6 +189,8 @@ const App: React.FC = () => {
             isSearching={isSearching}
             onSearch={performSearch}
             currentUser={currentUser}
+            state={searchPageState}
+            onUpdateState={handleUpdateSearchPageState}
           />
         );
     }
@@ -174,7 +205,6 @@ const App: React.FC = () => {
         onLogout={handleLogout}
       />
       <main className="flex-1 md:ml-64 transition-all duration-300 w-full relative">
-        {/* Global Linear Progress Bar */}
         {isSearching && (
             <div className="w-full bg-blue-50 h-1 overflow-hidden absolute top-0 left-0 right-0 z-50">
                 <div className="h-full bg-blue-600 animate-[pulse_1s_cubic-bezier(0.4,0,0.6,1)_infinite] w-1/2 translate-x-[-100%] ml-[50%]"></div>
@@ -183,7 +213,6 @@ const App: React.FC = () => {
         
         {renderContent()}
 
-        {/* Global Floating Status Indicator (Visible on all tabs) */}
         {isSearching && (
             <div className="fixed bottom-6 right-6 bg-white rounded-xl shadow-2xl border border-blue-100 p-4 z-[100] animate-in slide-in-from-bottom-8 duration-300 flex items-center space-x-4 max-w-sm ring-1 ring-black/5">
                 <div className="relative flex-shrink-0">

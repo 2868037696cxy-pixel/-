@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Ad } from '../types';
 import { PLACEHOLDER_AVATAR } from '../constants';
-import { MoreHorizontal, ThumbsUp, Share2, Facebook, Instagram, Languages, Loader2 } from 'lucide-react';
+import { MoreHorizontal, ThumbsUp, Share2, Facebook, Instagram, Languages, Loader2, Users } from 'lucide-react';
 import { translateToChinese } from '../services/geminiService';
 
 interface AdCardProps {
@@ -41,6 +41,14 @@ const AdCard: React.FC<AdCardProps> = ({ ad }) => {
     setTranslatedText(result);
     setShowTranslation(true);
     setIsTranslating(false);
+  };
+
+  const formatReach = (num?: number) => {
+    if (num === undefined || num === null) return '未公开';
+    if (num >= 10000) {
+        return (num / 10000).toFixed(1) + '万';
+    }
+    return num.toLocaleString();
   };
 
   return (
@@ -125,7 +133,11 @@ const AdCard: React.FC<AdCardProps> = ({ ad }) => {
             </span>
          </div>
          <div className="flex justify-between items-center text-xs text-gray-500 font-medium">
-             <span>开始于 {ad.startDate}</span>
+             <div className="flex items-center space-x-1 text-gray-600 bg-gray-50 px-2 py-1 rounded border border-gray-100" title="预估覆盖人数">
+                 <Users className="w-3 h-3" />
+                 <span>覆盖 {formatReach(ad.reach)}</span>
+             </div>
+             
              <div className="flex space-x-4">
                  <div className="flex items-center space-x-1 cursor-pointer hover:text-blue-600">
                     <ThumbsUp className="w-4 h-4" />
@@ -136,6 +148,9 @@ const AdCard: React.FC<AdCardProps> = ({ ad }) => {
                     <span>分享</span>
                  </div>
              </div>
+         </div>
+         <div className="mt-2 text-[10px] text-gray-400 text-right">
+             开始于 {ad.startDate}
          </div>
       </div>
     </div>

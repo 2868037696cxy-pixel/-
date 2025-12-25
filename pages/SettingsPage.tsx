@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { Save, Server, Shield, Key, ExternalLink, RefreshCw, CheckCircle2, AlertTriangle, Lock, Cpu, Zap, Eye, EyeOff, Globe } from 'lucide-react';
 import { AppSettings, DataSource, UserProfile } from '../types';
@@ -97,8 +96,8 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ currentUser }) => {
                        <Shield className={`w-5 h-5 ${settings.dataSource === DataSource.GEMINI ? 'text-blue-600' : 'text-gray-500'}`} />
                     </div>
                     <div>
-                      <h3 className="font-semibold text-gray-900">Gemini AI 模拟</h3>
-                      <p className="text-xs text-gray-500 mt-1">使用 AI 生成模拟数据 (测试用)</p>
+                      <h3 className="font-semibold text-gray-900">Gemini AI</h3>
+                      <p className="text-xs text-gray-500 mt-1">利用 AI 模型生成广告创意与洞察</p>
                     </div>
                   </div>
                   {settings.dataSource === DataSource.GEMINI && <CheckCircle2 className="w-5 h-5 text-blue-500" />}

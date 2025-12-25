@@ -1,11 +1,11 @@
 
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Search, Filter, Loader2, AlertCircle, Calendar, ChevronDown, ChevronUp, X, Layers, PlayCircle, CheckCircle2, Globe, FileType, Clock, History, Upload, Image, Languages, Settings2, Download, Minus, Plus } from 'lucide-react';
+import { Search, Filter, Loader2, AlertCircle, Calendar, ChevronDown, ChevronUp, X, Layers, PlayCircle, CheckCircle2, Globe, FileType, Clock, History, Upload, Image, Languages, Settings2, Download, Minus, Plus, Sparkles, Settings } from 'lucide-react';
 import { batchTranslateToChinese } from '../services/geminiService';
 import { searchAdsWithApify } from '../services/apifyService';
 import { getLocalSearchHistory } from '../services/storageService';
 import AdCard from '../components/AdCard';
-import { Ad, DataSource, SearchFilters, UserProfile, SearchHistoryItem } from '../types';
+import { Ad, DataSource, SearchFilters, UserProfile, SearchHistoryItem, SearchPageState, BatchResult } from '../types';
 import { STORAGE_KEYS, DEFAULT_SETTINGS } from '../constants';
 
 interface AdSearchPageProps {
@@ -15,46 +15,23 @@ interface AdSearchPageProps {
   isSearching: boolean;
   onSearch: (keyword: string, filters: SearchFilters, dataSource: DataSource, apifyToken: string) => Promise<void>;
   currentUser: UserProfile;
+  state: SearchPageState;
+  onUpdateState: (updates: Partial<SearchPageState>) => void;
 }
 
-const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, isSearching, onSearch, currentUser }) => {
-  // Input state (separate from global searched keyword)
-  const [inputKeyword, setInputKeyword] = useState(keyword);
-  
-  // Local UI State
+const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, isSearching, onSearch, currentUser, state, onUpdateState }) => {
+  // Local UI State (Setting related)
   const [dataSource, setDataSource] = useState<DataSource>(DataSource.GEMINI);
   const [apifyToken, setApifyToken] = useState<string>(DEFAULT_SETTINGS.apifyApiToken);
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
+  const [tokenError, setTokenError] = useState(false);
+  const [showFilters, setShowFilters] = useState(true); 
   
-  // Batch Mode State (Keep local as it is specific to this page view)
-  const [isBatchMode, setIsBatchMode] = useState(false);
-  const [batchKeywords, setBatchKeywords] = useState('');
-  const [batchProgress, setBatchProgress] = useState(0);
-  const [batchTotal, setBatchTotal] = useState(0);
-  const [batchResults, setBatchResults] = useState<{keyword: string, count: number, error?: string}[]>([]);
-  const [isBatchLoading, setIsBatchLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Batch Grouping Configuration
-  const [groupSize, setGroupSize] = useState(10);
-  const [groupCount, setGroupCount] = useState(1);
-  const [startGroup, setStartGroup] = useState(1);
-  const [concurrency, setConcurrency] = useState(5);
-
-  // Translation State
+  // Translation State (Transient)
   const [isTranslatingAll, setIsTranslatingAll] = useState(false);
   const [translationProgress, setTranslationProgress] = useState<{current: number, total: number} | null>(null);
-
-  // Advanced Filter State
-  const [showFilters, setShowFilters] = useState(true); 
-  const [filters, setFilters] = useState<SearchFilters>({
-    dateRange: 'LAST_30_DAYS',
-    adType: 'all',
-    region: 'ALL',
-    language: 'auto',
-    mediaType: 'ALL',
-    status: 'ACTIVE'
-  });
 
   useEffect(() => {
     const storedSettings = localStorage.getItem(STORAGE_KEYS.SETTINGS);
@@ -62,21 +39,18 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
         try {
             const parsed = JSON.parse(storedSettings);
             setDataSource(parsed.dataSource || DataSource.GEMINI);
-            if (parsed.apifyApiToken) setApifyToken(parsed.apifyApiToken);
+            if (parsed.apifyApiToken) {
+                setApifyToken(parsed.apifyApiToken);
+                setTokenError(false);
+            } else if (parsed.dataSource === DataSource.APIFY) {
+                setTokenError(true);
+            }
         } catch (e) {
             console.error("Error reading settings", e);
         }
     }
     setSearchHistory(getLocalSearchHistory());
-  }, [isSearching]); // Refresh history after search completes
-
-  // Sync input keyword with global keyword only if global keyword changes (e.g. session restore)
-  // and user hasn't typed anything yet or it matches old state
-  useEffect(() => {
-    if (keyword && inputKeyword === '') {
-        setInputKeyword(keyword);
-    }
-  }, [keyword]);
+  }, [isSearching]);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -86,7 +60,7 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
     reader.onload = (e) => {
         const text = e.target?.result as string;
         if (text) {
-            setBatchKeywords(text);
+            onUpdateState({ batchKeywords: text });
         }
     };
     reader.readAsText(file);
@@ -96,21 +70,21 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
   };
 
   const parsedKeywords = useMemo(() => {
-    return batchKeywords
+    return state.batchKeywords
         .split(/[\s,]+/) 
         .map(k => k.trim())
         .filter(k => k.length > 0);
-  }, [batchKeywords]);
+  }, [state.batchKeywords]);
 
   const targetKeywords = useMemo(() => {
-      const startIndex = (startGroup - 1) * groupSize;
-      const count = groupSize * groupCount;
+      const startIndex = (state.startGroup - 1) * state.groupSize;
+      const count = state.groupSize * state.groupCount;
       return parsedKeywords.slice(startIndex, startIndex + count);
-  }, [parsedKeywords, groupSize, groupCount, startGroup]);
+  }, [parsedKeywords, state.groupSize, state.groupCount, state.startGroup]);
 
   const totalAvailableGroups = useMemo(() => {
-      return Math.ceil(parsedKeywords.length / groupSize);
-  }, [parsedKeywords.length, groupSize]);
+      return Math.ceil(parsedKeywords.length / state.groupSize);
+  }, [parsedKeywords.length, state.groupSize]);
 
 
   const handleBatchSearch = async (e: React.FormEvent) => {
@@ -124,16 +98,18 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
         return;
     }
 
-    setIsBatchLoading(true);
-    setBatchProgress(0);
-    setBatchTotal(targetKeywords.length);
-    setBatchResults([]);
-    // Clearing global ads for batch results
-    onUpdateAds([]);
+    onUpdateState({ 
+        isBatchLoading: true, 
+        batchProgress: 0, 
+        batchTotal: targetKeywords.length, 
+        batchResults: [] 
+    });
+    
+    // We don't clear global ads immediately to maintain view until new ones arrive
+    let accumulatedAds: Ad[] = [];
 
     try {
-        const CHUNK_SIZE = concurrency; 
-        let allAds: Ad[] = [];
+        const CHUNK_SIZE = state.concurrency; 
         let fatalErrorOccurred = false;
 
         for (let i = 0; i < targetKeywords.length; i += CHUNK_SIZE) {
@@ -143,36 +119,46 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
             const chunkPromises = chunk.map(async (k) => {
                 if (fatalErrorOccurred) return { keyword: k, ads: [], success: false, error: "Skipped" };
                 try {
-                    const res = await searchAdsWithApify(apifyToken, k, filters);
-                    setBatchResults(prev => [...prev, { keyword: k, count: res.length }]);
-                    setBatchProgress(prev => prev + 1);
+                    const res = await searchAdsWithApify(apifyToken, k, state.filters);
+                    
+                    // Update batch results list
+                    onUpdateState({ 
+                        batchResults: [...state.batchResults, { keyword: k, count: res.length }],
+                        batchProgress: state.batchProgress + 1
+                    });
+                    
                     return { keyword: k, ads: res, success: true };
                 } catch (err: any) {
-                    const isFatal = err.isFatal || (err.message && err.message.includes('403'));
+                    const isFatal = err.isFatal || (err.message && (err.message.includes('403') || err.message.includes('无效') || err.message.includes('Invalid')));
                     if (isFatal) fatalErrorOccurred = true;
-                    setBatchResults(prev => [...prev, { keyword: k, count: 0, error: err.message }]);
-                    setBatchProgress(prev => prev + 1);
+                    
+                    onUpdateState({ 
+                        batchResults: [...state.batchResults, { keyword: k, count: 0, error: err.message }],
+                        batchProgress: state.batchProgress + 1
+                    });
+                    
                     return { keyword: k, ads: [], success: false, error: err.message, isFatal };
                 }
             });
 
             const chunkResults = await Promise.all(chunkPromises);
             for (const res of chunkResults) {
-                if (res.isFatal) {
-                    fatalErrorOccurred = true;
-                    alert(`关键错误: ${res.error}\n批量任务已停止。`);
-                }
-                if (res.ads) allAds = [...allAds, ...res.ads];
+                if (res.isFatal) fatalErrorOccurred = true;
+                if (res.ads) accumulatedAds = [...accumulatedAds, ...res.ads];
             }
         }
 
-        const uniqueAds = Array.from(new Map(allAds.map(item => [item.id, item])).values());
+        const uniqueAds = Array.from(new Map(accumulatedAds.map(item => [item.id, item])).values());
         onUpdateAds(uniqueAds);
+
+        if (fatalErrorOccurred) {
+            alert(`部分请求遇到关键错误，批量任务已中止。请检查 Token。`);
+        }
 
     } catch (error) {
         console.error("Batch search error", error);
     } finally {
-        setIsBatchLoading(false);
+        onUpdateState({ isBatchLoading: false });
     }
   };
 
@@ -200,7 +186,6 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
                       if (results[arrIdx]) newTranslationsMap[originalIndex] = results[arrIdx];
                   });
               } catch (batchError: any) {
-                  // Error handling...
                   console.error(batchError);
               }
               completedCount += batchIndices.length;
@@ -223,12 +208,19 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
 
   const handleExportCSV = () => {
     if (ads.length === 0) return;
-    const headers = ['广告ID', '关键词', '广告主', '广告文案', '行动号召', '平台', '状态', '开始日期', '链接'];
+    const headers = ['广告ID', '关键词', '广告主', '广告文案', '行动号召', '平台', '状态', '开始日期', '落地页/投放网站', '广告库链接', '覆盖人数'];
     const rows = ads.map(ad => [
-      ad.id, ad.originalKeyword || '', `"${(ad.advertiserName || '').replace(/"/g, '""')}"`,
+      ad.id, 
+      ad.originalKeyword || '', 
+      `"${(ad.advertiserName || '').replace(/"/g, '""')}"`,
       `"${(ad.translatedCopy || ad.adCopy || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`, 
-      `"${(ad.ctaText || '').replace(/"/g, '""')}"`, `"${(ad.platform || []).join(', ')}"`,
-      ad.isActive ? '活跃' : '停止', ad.startDate, ad.adLibraryUrl || ''
+      `"${(ad.ctaText || '').replace(/"/g, '""')}"`, 
+      `"${(ad.platform || []).join(', ')}"`,
+      ad.isActive ? '活跃' : '停止', 
+      ad.startDate, 
+      `"${(ad.displayLink || '').replace(/"/g, '""')}"`, 
+      ad.adLibraryUrl || '', 
+      ad.reach || '未公开'
     ]);
     const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -243,17 +235,16 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
 
   const handleSingleSearch = useCallback(async (e?: React.FormEvent, overrideKeyword?: string, overrideFilters?: SearchFilters) => {
     if (e) e.preventDefault();
-    const effectiveKeyword = overrideKeyword || inputKeyword;
-    const effectiveFilters = overrideFilters || filters;
+    const effectiveKeyword = overrideKeyword || state.inputKeyword;
+    const effectiveFilters = overrideFilters || state.filters;
 
     if (!effectiveKeyword.trim()) return;
 
-    if (overrideKeyword) setInputKeyword(overrideKeyword);
-    if (overrideFilters) setFilters(overrideFilters);
+    if (overrideKeyword) onUpdateState({ inputKeyword: overrideKeyword });
+    if (overrideFilters) onUpdateState({ filters: overrideFilters });
 
-    // DELEGATE TO APP
     await onSearch(effectiveKeyword, effectiveFilters, dataSource, apifyToken);
-  }, [inputKeyword, dataSource, apifyToken, filters, onSearch]);
+  }, [state.inputKeyword, state.filters, dataSource, apifyToken, onSearch, onUpdateState]);
 
   const handleHistoryClick = (item: SearchHistoryItem) => {
     handleSingleSearch(undefined, item.keyword, item.filters);
@@ -288,21 +279,32 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
         </h1>
         <div className={`inline-flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-medium border ${dataSource === DataSource.APIFY ? 'bg-green-50 text-green-700 border-green-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
             <div className={`w-2 h-2 rounded-full ${dataSource === DataSource.APIFY ? 'bg-green-500' : 'bg-blue-500'}`}></div>
-            <span>数据源: {dataSource === DataSource.APIFY ? 'Apify 实时抓取' : 'Gemini AI 模拟'}</span>
+            <span>数据源: {dataSource === DataSource.APIFY ? 'Apify 实时抓取' : 'Gemini AI'}</span>
         </div>
+        {tokenError && dataSource === DataSource.APIFY && (
+            <div className="mt-2">
+                <div className="inline-flex items-center px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                    <AlertCircle className="w-4 h-4 mr-2" />
+                    <span>Apify Token 未配置或无效</span>
+                    <a href="#" className="ml-2 font-bold underline flex items-center" onClick={(e) => { e.preventDefault(); (document.querySelector('button[title="系统设置"]') as HTMLElement)?.click(); }}>
+                        去设置 <Settings className="w-3 h-3 ml-1" />
+                    </a>
+                </div>
+            </div>
+        )}
       </div>
 
       <div className="max-w-4xl mx-auto mb-4 flex justify-end">
           <div className="bg-white p-1 rounded-lg border border-gray-200 inline-flex">
-              <button onClick={() => setIsBatchMode(false)} className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${!isBatchMode ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>单次搜索</button>
-              <button onClick={() => setIsBatchMode(true)} className={`px-4 py-2 text-sm font-medium rounded-md transition-all flex items-center space-x-1 ${isBatchMode ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+              <button onClick={() => onUpdateState({ isBatchMode: false })} className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${!state.isBatchMode ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>单次搜索</button>
+              <button onClick={() => onUpdateState({ isBatchMode: true })} className={`px-4 py-2 text-sm font-medium rounded-md transition-all flex items-center space-x-1 ${state.isBatchMode ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
                   <Layers className="w-4 h-4" /> <span>批量模式</span>
               </button>
           </div>
       </div>
 
       <div className="max-w-4xl mx-auto mb-12 bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden relative z-10 transition-all">
-        {!isBatchMode ? (
+        {!state.isBatchMode ? (
             <>
                 <div className="p-2">
                     <form onSubmit={(e) => handleSingleSearch(e)} className="relative flex items-center">
@@ -313,8 +315,8 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
                             type="text"
                             className="flex-1 w-full pl-4 pr-4 py-4 bg-transparent border-none focus:ring-0 text-gray-900 placeholder-gray-400 text-lg"
                             placeholder="输入关键词 (例如 'Nike', '护肤品')..."
-                            value={inputKeyword}
-                            onChange={(e) => setInputKeyword(e.target.value)}
+                            value={state.inputKeyword}
+                            onChange={(e) => onUpdateState({ inputKeyword: e.target.value })}
                         />
                         <div className="flex items-center pr-2 space-x-2">
                              <button type="button" onClick={() => setShowFilters(!showFilters)} className={`p-2 rounded-xl transition-colors flex items-center space-x-1 text-sm font-medium ${showFilters ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>
@@ -344,7 +346,7 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                             <div className="space-y-2">
                                 <label className="text-xs font-semibold text-gray-500 uppercase flex items-center"><Calendar className="w-3 h-3 mr-1" /> 日期范围</label>
-                                <select className="block w-full rounded-lg border-gray-300 text-sm focus:border-blue-500 focus:ring-blue-500" value={filters.dateRange} onChange={(e) => setFilters({...filters, dateRange: e.target.value})}>
+                                <select className="block w-full rounded-lg border-gray-300 text-sm focus:border-blue-500 focus:ring-blue-500" value={state.filters.dateRange} onChange={(e) => onUpdateState({ filters: {...state.filters, dateRange: e.target.value} })}>
                                     <option value="LAST_24_HOURS">过去 24 小时</option>
                                     <option value="LAST_7_DAYS">过去 7 天</option>
                                     <option value="LAST_14_DAYS">过去 14 天</option>
@@ -356,7 +358,7 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
                             </div>
                              <div className="space-y-2">
                                 <label className="text-xs font-semibold text-gray-500 uppercase flex items-center"><Clock className="w-3 h-3 mr-1" /> 广告状态</label>
-                                <select className="block w-full rounded-lg border-gray-300 text-sm focus:border-blue-500 focus:ring-blue-500" value={filters.status || 'ACTIVE'} onChange={(e) => setFilters({...filters, status: e.target.value})}>
+                                <select className="block w-full rounded-lg border-gray-300 text-sm focus:border-blue-500 focus:ring-blue-500" value={state.filters.status || 'ACTIVE'} onChange={(e) => onUpdateState({ filters: {...state.filters, status: e.target.value} })}>
                                     <option value="ACTIVE">活跃中 (Active)</option>
                                     <option value="ALL">全部 (Active & Inactive)</option>
                                     <option value="INACTIVE">已停止 (Inactive)</option>
@@ -364,7 +366,7 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
                             </div>
                             <div className="space-y-2">
                                 <label className="text-xs font-semibold text-gray-500 uppercase flex items-center"><Globe className="w-3 h-3 mr-1" /> 投放地区</label>
-                                <select className="block w-full rounded-lg border-gray-300 text-sm focus:border-blue-500 focus:ring-blue-500" value={filters.region} onChange={(e) => setFilters({...filters, region: e.target.value})}>
+                                <select className="block w-full rounded-lg border-gray-300 text-sm focus:border-blue-500 focus:ring-blue-500" value={state.filters.region} onChange={(e) => onUpdateState({ filters: {...state.filters, region: e.target.value} })}>
                                     <option value="ALL">全部地区</option>
                                     <option value="CN">中国 (CN)</option>
                                     <option value="US">美国 (US)</option>
@@ -378,14 +380,14 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
                             </div>
                             <div className="space-y-2">
                                 <label className="text-xs font-semibold text-gray-500 uppercase flex items-center"><FileType className="w-3 h-3 mr-1" /> 广告类型</label>
-                                <select className="block w-full rounded-lg border-gray-300 text-sm focus:border-blue-500 focus:ring-blue-500" value={filters.adType} onChange={(e) => setFilters({...filters, adType: e.target.value})}>
+                                <select className="block w-full rounded-lg border-gray-300 text-sm focus:border-blue-500 focus:ring-blue-500" value={state.filters.adType} onChange={(e) => onUpdateState({ filters: {...state.filters, adType: e.target.value} })}>
                                     <option value="all">所有类型</option>
                                     <option value="political_and_issue_ads">社会议题、选举或政治</option>
                                 </select>
                             </div>
                             <div className="space-y-2">
                                 <label className="text-xs font-semibold text-gray-500 uppercase flex items-center"><Image className="w-3 h-3 mr-1" /> 媒体类型</label>
-                                <select className="block w-full rounded-lg border-gray-300 text-sm focus:border-blue-500 focus:ring-blue-500" value={filters.mediaType || 'ALL'} onChange={(e) => setFilters({...filters, mediaType: e.target.value})}>
+                                <select className="block w-full rounded-lg border-gray-300 text-sm focus:border-blue-500 focus:ring-blue-500" value={state.filters.mediaType || 'ALL'} onChange={(e) => onUpdateState({ filters: {...state.filters, mediaType: e.target.value} })}>
                                     <option value="ALL">所有媒体</option>
                                     <option value="IMAGE">图片</option>
                                     <option value="VIDEO">视频</option>
@@ -393,7 +395,7 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
                             </div>
                             <div className="space-y-2">
                                 <label className="text-xs font-semibold text-gray-500 uppercase flex items-center"><Languages className="w-3 h-3 mr-1" /> 语言</label>
-                                <select className="block w-full rounded-lg border-gray-300 text-sm focus:border-blue-500 focus:ring-blue-500" value={filters.language || 'auto'} onChange={(e) => setFilters({...filters, language: e.target.value})}>
+                                <select className="block w-full rounded-lg border-gray-300 text-sm focus:border-blue-500 focus:ring-blue-500" value={state.filters.language || 'auto'} onChange={(e) => onUpdateState({ filters: {...state.filters, language: e.target.value} })}>
                                     <option value="auto">不限</option>
                                     <option value="en">English (英语)</option>
                                     <option value="zh">Chinese (中文)</option>
@@ -401,7 +403,7 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
                                 </select>
                             </div>
                             <div className="flex items-end">
-                                <button type="button" onClick={() => setFilters({dateRange: 'LAST_30_DAYS', adType: 'all', region: 'ALL', language: 'auto', mediaType: 'ALL', status: 'ACTIVE'})} className="w-full text-gray-500 hover:text-gray-700 text-sm flex items-center justify-center space-x-1 px-3 py-2.5 bg-white border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors">
+                                <button type="button" onClick={() => onUpdateState({ filters: INITIAL_SEARCH_STATE.filters })} className="w-full text-gray-500 hover:text-gray-700 text-sm flex items-center justify-center space-x-1 px-3 py-2.5 bg-white border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors">
                                     <X className="w-4 h-4" /> <span>重置</span>
                                 </button>
                             </div>
@@ -421,10 +423,10 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
                             </button>
                         </div>
                     </div>
-                    <textarea className="w-full h-32 p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-sm font-mono" placeholder={`Nike\nAdidas\nPuma`} value={batchKeywords} onChange={(e) => setBatchKeywords(e.target.value)}></textarea>
+                    <textarea className="w-full h-32 p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-sm font-mono" placeholder={`Nike\nAdidas\nPuma`} value={state.batchKeywords} onChange={(e) => onUpdateState({ batchKeywords: e.target.value })}></textarea>
                      <div className="text-xs text-gray-500 mt-1 flex justify-between">
                          <span>当前已识别: <span className="font-semibold text-gray-700">{parsedKeywords.length}</span> 个关键词</span>
-                         <span>共 <span className="font-semibold text-gray-700">{totalAvailableGroups}</span> 组 (每组 {groupSize} 个)</span>
+                         <span>共 <span className="font-semibold text-gray-700">{totalAvailableGroups}</span> 组 (每组 {state.groupSize} 个)</span>
                      </div>
                 </div>
 
@@ -434,31 +436,31 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
                          <span className="text-base font-bold text-gray-800">分组与并发配置</span>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                         <NumberControl label="每组关键词数" value={groupSize} onChange={setGroupSize} min={1} tooltip="一次处理多少个关键词" />
-                         <NumberControl label="起始组序号" value={startGroup} onChange={setStartGroup} min={1} tooltip="从第几组开始执行" />
-                         <NumberControl label="处理组数" value={groupCount} onChange={setGroupCount} min={1} tooltip="本次任务执行多少组" />
-                         <NumberControl label="并发数量" value={concurrency} onChange={setConcurrency} min={1} max={100} tooltip="同时发起的请求数量 (最高100)" />
+                         <NumberControl label="每组关键词数" value={state.groupSize} onChange={(v) => onUpdateState({ groupSize: v })} min={1} tooltip="一次处理多少个关键词" />
+                         <NumberControl label="起始组序号" value={state.startGroup} onChange={(v) => onUpdateState({ startGroup: v })} min={1} tooltip="从第几组开始执行" />
+                         <NumberControl label="处理组数" value={state.groupCount} onChange={(v) => onUpdateState({ groupCount: v })} min={1} tooltip="本次任务执行多少组" />
+                         <NumberControl label="并发数量" value={state.concurrency} onChange={(v) => onUpdateState({ concurrency: v })} min={1} max={100} tooltip="同时发起的请求数量 (最高100)" />
                     </div>
                 </div>
                 
                 <div className="flex justify-end items-center">
-                    <button onClick={handleBatchSearch} disabled={isBatchLoading || !batchKeywords.trim()} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-medium transition-all transform active:scale-95 disabled:opacity-50 disabled:active:scale-100 flex items-center space-x-2 shadow-md hover:shadow-lg">
-                        {isBatchLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <PlayCircle className="w-5 h-5" />}
+                    <button onClick={handleBatchSearch} disabled={state.isBatchLoading || !state.batchKeywords.trim()} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-medium transition-all transform active:scale-95 disabled:opacity-50 disabled:active:scale-100 flex items-center space-x-2 shadow-md hover:shadow-lg">
+                        {state.isBatchLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <PlayCircle className="w-5 h-5" />}
                         <span>开始批量搜索 ({targetKeywords.length} 词)</span>
                     </button>
                 </div>
 
-                {(isBatchLoading || batchResults.length > 0) && (
+                {(state.isBatchLoading || state.batchResults.length > 0) && (
                     <div className="mt-8 space-y-4 animate-in fade-in slide-in-from-bottom-2">
                         <div className="flex justify-between text-xs text-gray-500 font-medium mb-1">
                             <span>任务进度</span>
-                            <span>{Math.round((batchTotal > 0 ? (batchProgress / batchTotal) * 100 : 0))}%</span>
+                            <span>{Math.round((state.batchTotal > 0 ? (state.batchProgress / state.batchTotal) * 100 : 0))}%</span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                            <div className="bg-gradient-to-r from-blue-500 to-blue-600 h-3 rounded-full transition-all duration-300 ease-out" style={{ width: `${batchTotal > 0 ? (batchProgress / batchTotal) * 100 : 0}%` }}></div>
+                            <div className="bg-gradient-to-r from-blue-500 to-blue-600 h-3 rounded-full transition-all duration-300 ease-out" style={{ width: `${state.batchTotal > 0 ? (state.batchProgress / state.batchTotal) * 100 : 0}%` }}></div>
                         </div>
                         <div className="max-h-64 overflow-y-auto border border-gray-100 rounded-xl bg-white shadow-sm p-3 text-xs space-y-2 custom-scrollbar">
-                            {batchResults.map((res, idx) => (
+                            {state.batchResults.map((res, idx) => (
                                 <div key={idx} className={`flex justify-between items-center p-3 rounded-lg border transition-colors ${res.error ? 'bg-red-50 text-red-700 border-red-100' : 'bg-gray-50 text-gray-700 border-gray-100 hover:bg-gray-100'}`}>
                                     <span className="font-medium truncate flex-1 mr-4">{res.keyword}</span>
                                     {res.error ? (
@@ -494,7 +496,7 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
                         </button>
                     )}
                     {dataSource === DataSource.GEMINI && (
-                        <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-md border border-yellow-200 flex items-center"><AlertCircle className="w-3 h-3 mr-1" /> 模拟数据仅供演示</span>
+                        <span className="text-xs bg-purple-50 text-purple-700 px-2 py-1 rounded-md border border-purple-100 flex items-center"><Sparkles className="w-3 h-3 mr-1" /> AI 智能生成结果</span>
                     )}
                 </div>
             </div>
@@ -520,6 +522,20 @@ const AdSearchPage: React.FC<AdSearchPageProps> = ({ ads, keyword, onUpdateAds, 
       )}
     </div>
   );
+};
+
+// Constant for resetting filters
+const INITIAL_SEARCH_STATE_FILTERS = {
+    dateRange: 'LAST_30_DAYS',
+    adType: 'all',
+    region: 'ALL',
+    language: 'auto',
+    mediaType: 'ALL',
+    status: 'ACTIVE'
+};
+
+const INITIAL_SEARCH_STATE: Partial<SearchPageState> = {
+    filters: INITIAL_SEARCH_STATE_FILTERS
 };
 
 export default AdSearchPage;
