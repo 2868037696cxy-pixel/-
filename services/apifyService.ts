@@ -5,45 +5,37 @@ import { ACTOR_ID } from '../constants';
 
 const APIFY_BASE_URL = 'https://api.apify.com/v2';
 
-// Helper to convert internal period constants to Apify format
 function convertPeriod(period: string) {
     const periodMap: Record<string, string> = {
-        'LAST_30_DAYS': 'last30d',
-        'LAST_90_DAYS': 'last30d', // Fallback as Apify might not support 90d directly in this actor
-        'LAST_YEAR': 'last30d',     // Fallback
         'LAST_24_HOURS': 'last24h',
         'LAST_7_DAYS': 'last7d',
         'LAST_14_DAYS': 'last14d',
+        'LAST_30_DAYS': 'last30d',
+        'LAST_90_DAYS': 'last30d',
+        'LAST_YEAR': 'last30d',
         'ALL': ''
     };
     return periodMap[period] || '';
 }
 
-// Build the Facebook Ads URL based on filters
 function buildFacebookAdsURL(keyword: string, filters: SearchFilters) {
-    const baseURL = 'https://www.facebook.com/ads/library/';
     const params = new URLSearchParams();
-
-    // Basic search parameters
-    params.set('active_status', 'active'); // Default to active
+    params.set('active_status', 'active');
     params.set('ad_type', filters.adType || 'all'); 
     params.set('country', filters.region || 'ALL');
     params.set('q', keyword);
     params.set('search_type', 'keyword_unordered');
     
-    // Media Type
     if (filters.mediaType && filters.mediaType !== 'ALL') {
          params.set('media_type', filters.mediaType.toLowerCase());
     } else {
          params.set('media_type', 'all');
     }
 
-    // Language
     if (filters.language && filters.language !== 'auto' && filters.language !== 'ALL') {
         params.append('content_languages[0]', filters.language);
     }
 
-    // Time period for URL parameters (Facebook format)
     if (filters.dateRange !== 'ALL') {
         let fbTimePeriod = '';
         switch(filters.dateRange) {
@@ -58,12 +50,9 @@ function buildFacebookAdsURL(keyword: string, filters: SearchFilters) {
         if (fbTimePeriod) params.set('time_range', fbTimePeriod);
     }
 
-    return baseURL + '?' + params.toString();
+    return `https://www.facebook.com/ads/library/?${params.toString()}`;
 }
 
-/**
- * Verify if the Apify Token is valid
- */
 export const verifyApifyToken = async (token: string): Promise<boolean> => {
     try {
         if (!token) return false;
@@ -74,60 +63,22 @@ export const verifyApifyToken = async (token: string): Promise<boolean> => {
     }
 };
 
-/**
- * Maps raw Apify item to internal Ad interface
- * Based on processAdData from reference code
- */
 const mapApifyItemToAd = (item: any, index: number): Ad => {
-    // Normalize fields
     const id = item.ad_archive_id || item.ad_id || item.id || `apify-${index}`;
     const advertiserName = item.snapshot?.page_name || item.page_name || "Unknown Advertiser";
     
-    // Extract content from various potential fields
-    let adCopy = item.snapshot?.body?.text || 
-                   item.snapshot?.title || 
-                   item.ad_creative_body || 
-                   item.text || 
-                   item.message || 
-                   item.description || 
-                   "";
-    
-    // If no text, mark it instead of empty string to avoid filtering
-    if (!adCopy || adCopy.trim() === '') {
-        adCopy = "[纯媒体广告/无文案]";
-    }
+    let adCopy = item.snapshot?.body?.text || item.snapshot?.title || item.ad_creative_body || item.text || "";
+    if (!adCopy || adCopy.trim() === '') adCopy = "[纯媒体广告]";
                    
-    const ctaText = item.snapshot?.cta_text || item.cta_text || "Learn More";
-    
-    // Media handling (Kept for metadata but not used in UI anymore)
-    let adMedia = `ad-apify-${index}`; 
-    let mediaType = MediaType.IMAGE;
+    const ctaText = item.snapshot?.cta_text || item.cta_text || "了解更多";
+    let mediaType = (item.snapshot?.videos?.length > 0) ? MediaType.VIDEO : MediaType.IMAGE;
 
-    if (item.snapshot?.images && item.snapshot.images.length > 0) {
-        adMedia = item.snapshot.images[0].original_image_url || item.snapshot.images[0].resized_image_url;
-    } else if (item.snapshot?.videos && item.snapshot.videos.length > 0) {
-        adMedia = item.snapshot.videos[0].video_preview_image_url; 
-        mediaType = MediaType.VIDEO;
-    } else if (item.images && item.images.length > 0) {
-        adMedia = item.images[0];
-    }
-
-    let platform = item.publisher_platform || ["Facebook"];
-    if (typeof platform === 'string') platform = [platform];
-
-    // Extraction for Display Link and Headline
-    const displayLink = item.snapshot?.caption || "WWW.FACEBOOK.COM"; // 'caption' usually holds the display domain
-    const headline = item.snapshot?.title || advertiserName; // 'title' usually holds the link headline
-
+    const displayLink = item.snapshot?.caption || "WWW.FACEBOOK.COM";
+    const headline = item.snapshot?.title || advertiserName;
     const startDate = item.start_date || new Date().toISOString().split('T')[0];
-    const endDate = item.end_date || undefined;
-    const isActive = item.is_active === true;
-    const count = item.ads_count || 1;
     const adLibraryUrl = item.ad_library_url || `https://www.facebook.com/ads/library/?id=${id}`;
 
-    // --- Extract Reach (Impressions) Logic ---
     let reach: number | undefined = undefined;
-
     const parseReach = (val: any): number | undefined => {
         if (typeof val === 'number') return val;
         if (typeof val === 'string') {
@@ -137,38 +88,20 @@ const mapApifyItemToAd = (item: any, index: number): Ad => {
         return undefined;
     };
 
-    // 1. Try EU Transparency Field (Exact number like 348)
-    if (item.snapshot?.eu_total_reach) {
-        reach = parseReach(item.snapshot.eu_total_reach);
-    }
-    
-    // 2. Try Standard Impressions Lower Bound
-    if (reach === undefined && item.snapshot?.impressions?.lower_bound) {
-        reach = parseReach(item.snapshot.impressions.lower_bound);
-    }
-
-    // 3. Fallback to root level fields
-    if (reach === undefined && item.eu_total_reach) {
-        reach = parseReach(item.eu_total_reach);
-    }
-    if (reach === undefined && item.impressions?.lower_bound) {
-        reach = parseReach(item.impressions.lower_bound);
-    }
+    if (item.snapshot?.eu_total_reach) reach = parseReach(item.snapshot.eu_total_reach);
+    else if (item.snapshot?.impressions?.lower_bound) reach = parseReach(item.snapshot.impressions.lower_bound);
 
     return {
       id,
       advertiserName,
-      advertiserAvatar: `avatar-${advertiserName}`, // Placeholder
+      advertiserAvatar: `avatar-${advertiserName}`,
       adCopy,
-      adMedia, 
       mediaType,
       ctaText,
       startDate,
-      endDate,
-      isActive,
-      platform: Array.isArray(platform) ? platform : ['Facebook'],
+      isActive: item.is_active !== false,
+      platform: Array.isArray(item.publisher_platform) ? item.publisher_platform : ['Facebook'],
       adLibraryUrl,
-      count,
       displayLink,
       headline,
       reach
@@ -176,70 +109,68 @@ const mapApifyItemToAd = (item: any, index: number): Ad => {
 };
 
 /**
- * Active Scraping Function
- * Triggers the actor to run specifically for the generated URL
+ * 核心优化：批量关键词抓取 (Batch Search)
+ * 一次请求发送多个 URL 给 Actor，极大减少 Actor 启动开销
  */
-export const searchAdsWithApify = async (
+export const searchAdsWithApifyBatch = async (
   token: string, 
-  keyword: string, 
+  keywords: string[], 
   filters: SearchFilters
-): Promise<Ad[]> => {
+): Promise<{ads: Ad[], keywordMap: Record<string, number>}> => {
   try {
-    if (!token) throw new Error("未配置 Apify API 令牌。请在设置中配置。");
+    if (!token) throw new Error("未配置 Apify Token");
 
-    // 1. Build the specific Facebook URL for this query
-    const searchUrl = buildFacebookAdsURL(keyword, filters);
-    console.log(`Searching Facebook Ads via Apify: ${searchUrl}`);
+    const urls = keywords.map(k => ({ url: buildFacebookAdsURL(k, filters) }));
 
-    // 2. Prepare Input for the Actor
     const input = {
-        urls: [{ url: searchUrl }],
-        count: 100, // Increased to 100 to catch more ads
+        urls: urls,
+        count: 50, // 每个关键词抓取的上限，根据需求调整
         period: convertPeriod(filters.dateRange),
         'scrapePageAds.activeStatus': 'all',
         'scrapePageAds.countryCode': 'ALL'
     };
 
-    // 3. Call the run-sync-get-dataset-items endpoint
-    // This runs the actor and waits for results (timeout 2 mins usually sufficient for small batches)
+    // run-sync-get-dataset-items 虽然快，但对于超大批量，建议使用异步模式。
+    // 这里采用同步模式并增加超时，确保稳定性
     const response = await axios.post(
         `${APIFY_BASE_URL}/acts/${ACTOR_ID}/run-sync-get-dataset-items`,
         input,
         {
             params: { token },
-            timeout: 300000 // 5 minutes timeout
+            timeout: 600000 // 10分钟超时
         }
     );
 
     const items = response.data;
-    if (!Array.isArray(items)) return [];
+    if (!Array.isArray(items)) return { ads: [], keywordMap: {} };
 
-    // 4. Map and Dedup results
-    const mappedAds = items
-        .map((item, idx) => mapApifyItemToAd(item, idx))
-        .filter(ad => ad.id); // Filter only by ID, allow empty text (handled in map function)
+    const keywordMap: Record<string, number> = {};
+    const mappedAds = items.map((item, idx) => {
+        const ad = mapApifyItemToAd(item, idx);
+        // 尝试找回原始关键词归属（Actor 通常会返回搜索 URL）
+        const searchUrl = item.searchUrl || '';
+        const matchedKeyword = keywords.find(k => searchUrl.includes(encodeURIComponent(k))) || keywords[0];
+        ad.originalKeyword = matchedKeyword;
+        keywordMap[matchedKeyword] = (keywordMap[matchedKeyword] || 0) + 1;
+        return ad;
+    });
 
-    // Remove duplicates based on ID
-    const uniqueAds = Array.from(new Map(mappedAds.map(item => [item.id, item])).values());
-
-    // Attach original keyword for tracking
-    return uniqueAds.map(ad => ({
-        ...ad,
-        originalKeyword: keyword
-    }));
+    return {
+        ads: Array.from(new Map(mappedAds.map(item => [item.id, item])).values()),
+        keywordMap
+    };
 
   } catch (error: any) {
-    console.error("Apify Search Error:", error);
-    if (error.code === 'ECONNABORTED') {
-        throw new Error("请求超时。Facebook 广告库响应较慢，请减少批量并发数。");
-    }
-    // Handle Axios Network Error specifically
-    if (error.message === 'Network Error') {
-        throw new Error("网络连接失败。请检查您的网络设置，或是否开启了 VPN/代理导致连接中断。");
-    }
+    console.error("Batch Search Error:", error);
     if (error.response?.status === 401 || error.response?.status === 403) {
-        throw new Error("Apify API 令牌无效或过期。请前往“系统设置”更新 Token。");
+        throw new Error("Invalid Token");
     }
-    throw new Error(error.message || "Apify 搜索请求失败");
+    throw error;
   }
+};
+
+// 保持兼容性的单次搜索
+export const searchAdsWithApify = async (token: string, keyword: string, filters: SearchFilters): Promise<Ad[]> => {
+    const result = await searchAdsWithApifyBatch(token, [keyword], filters);
+    return result.ads;
 };
