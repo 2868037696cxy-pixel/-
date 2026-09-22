@@ -8,29 +8,33 @@
 </head>
 <body>
 <div id="app">
-  <!-- 顶栏 -->
+  <!-- ============ 全局顶栏 ============ -->
   <header class="topbar">
     <div class="brand">
       <div class="logo">JEV</div>
       <div class="brand-text">
-        <h1>Creative Workbench</h1>
-        <span>跨境电商素材评分分类工作台 · 看素材 / 筛素材 / 评素材</span>
+        <h1>Creative&nbsp;Workbench</h1>
+        <span>跨境电商素材 · AI 评分审片工作台</span>
       </div>
     </div>
-    <div class="stats">
+
+    <div class="stats" id="globalStats">
       <div class="stat"><b id="statTotal">0</b><span>素材总数</span></div>
       <div class="stat"><b id="statAvg">--</b><span>平均分</span></div>
       <div class="stat"><b id="statTop">0</b><span>S/A 级</span></div>
-      <div class="stat" style="color:#fda4af"><b id="statRisk">0</b><span>风险素材</span></div>
+      <div class="stat risk"><b id="statRisk">0</b><span>风险素材</span></div>
       <div class="stat"><b id="statGo">0</b><span>可投放</span></div>
     </div>
+
     <div class="top-actions">
-      <button class="btn ghost" id="btnExport">导出 CSV</button>
+      <button class="btn ai" id="btnAIAll">✦ AI 审核</button>
+      <button class="btn ghost" id="btnExport">导出</button>
       <button class="btn ghost" id="btnModel">评分模型</button>
       <button class="btn primary" id="btnAdd">+ 导入素材</button>
     </div>
   </header>
 
+  <!-- ============ 主布局：侧栏筛选 + 工作区 ============ -->
   <div class="layout">
     <!-- 左侧：可视化筛选面板 -->
     <aside class="fpanel" id="fpanel">
@@ -90,7 +94,7 @@
       </div>
     </aside>
 
-    <!-- 右侧：浏览区 -->
+    <!-- 右侧：工作区 -->
     <div class="maincol">
       <section class="results-bar">
         <div class="hitinfo">命中 <b id="hitCount">0</b> / 共 <b id="totalCount">0</b> 个素材</div>
@@ -137,6 +141,10 @@
 <!-- 评分模型弹窗 -->
 <div id="modelModalBackdrop" class="modal-backdrop hidden"></div>
 <div id="modelModal" class="modal model-modal hidden"></div>
+
+<!-- AI 审核弹窗 -->
+<div id="aiModalBackdrop" class="modal-backdrop hidden"></div>
+<div id="aiModal" class="modal ai-modal hidden"></div>
 
 <div id="toast" class="toast hidden"></div>
 <script src="app.js"></script>

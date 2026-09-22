@@ -268,11 +268,15 @@ function cardHTML(m) {
       ? `<video src="${m.ref}" poster="${m.basic.poster || ''}" muted loop preload="metadata" onmouseenter="this.play()" onmouseleave="this.pause();this.currentTime=0"></video>`
       : `<img src="${src}" loading="lazy" alt="">`;
   const vChip = (p, k) => `<span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}" title="${esc((p.reasons || []).join('；'))}"><i>${CH_ICON[k]}</i>${fmt(p.fit)}</span>`;
+  const aiBadge = m.analysis.aiAssessed
+    ? `<span class="ai-chip ${m.analysis.aiRecommendation || 'review'}" title="TypeSafe 建议：${m.analysis.aiRecommendReason || ''}">✦ ${m.analysis.aiRecommendation === 'keep' ? '通过' : m.analysis.aiRecommendation === 'reject' ? '淘汰' : '复核'}</span>`
+    : '';
   return `<article class="card" data-id="${m.id}" draggable="true" onclick="openDrawer('${m.id}')">
     <div class="thumb">${mediaEl}
       ${revOf(m) !== 'todo' ? `<div class="rv-badge ${revOf(m)}">${revOf(m) === 'keep' ? '✅ 通过' : '❌ 淘汰'}</div>` : ''}
       <div class="score-badge ${g}"><b>${fmt(a.composite)}</b><span>分</span></div>
       <div class="grade-chip badge-${g}">${g}级${m.custom?.manualGrade ? ' ✍' : ''}</div>
+      ${aiBadge}
     </div>
     <div class="card-body">
       <div class="card-title">${esc(m.name)}</div>
@@ -520,7 +524,17 @@ function reviewSideHTML(m) {
   const dim = (label, val, color) => `<div class="dim"><span class="lbl">${label}</span>
     <div style="flex:1;height:6px;background:#eef1f8;border-radius:3px"><div style="width:${val * 10}%;height:100%;background:${color};border-radius:3px"></div></div>
     <span class="val">${val}</span></div>`;
+  const aiBox = m.analysis.aiAssessed
+    ? `<div class="section ai-advice ${m.analysis.aiRecommendation || 'review'}">
+        <h3>✦ TypeSafe 审核建议</h3>
+        <div class="ai-advice-main">
+          <span class="ai-advice-tag ${m.analysis.aiRecommendation || 'review'}">${m.analysis.aiRecommendation === 'keep' ? '✅ 建议通过' : m.analysis.aiRecommendation === 'reject' ? '❌ 建议淘汰' : '🔍 建议人工复核'}</span>
+          <p class="subtle">${m.analysis.aiRecommendReason || ''}</p>
+        </div>
+      </div>`
+    : `<div class="section"><h3>✦ TypeSafe AI</h3><p class="subtle">未评测 — 点击详情或顶栏「AI 审核」对本素材调用 Jev 模型。</p></div>`;
   return `
+    ${aiBox}
     <div class="section"><h3>JEV 三维</h3>
       ${dim('J 吸睛度', a.hook?.score || 0, '#f43f5e')}
       ${dim('E 沉浸信任', a.engagement?.score || 0, '#8b5cf6')}
@@ -611,11 +625,15 @@ function bulkItemHTML(m) {
   const st = revOf(m);
   const sel = bulkSel.has(m.id);
   const img = src ? `<img src="${src}" loading="lazy" alt="">` : '<span style="font-size:20px">🗂️</span>';
+  const ai = m.analysis.aiAssessed
+    ? `<span class="bulk-ai ${m.analysis.aiRecommendation || 'review'}" title="TypeSafe 建议：${m.analysis.aiRecommendReason || ''}">✦${m.analysis.aiRecommendation === 'keep' ? '过' : m.analysis.aiRecommendation === 'reject' ? '汰' : '核'}</span>`
+    : '';
   return `<div class="bulk-item ${sel ? 'sel' : ''} bulk-${st}" data-id="${m.id}"
       onclick="bulkClick(event,'${m.id}')" ondblclick="openDrawer('${m.id}')"
-      title="${esc(m.name)} · ${fmt(m.analysis.composite)}分 · ${st === 'keep' ? '已通过' : st === 'reject' ? '已淘汰' : '未审查'}">
+      title="${esc(m.name)} · ${fmt(m.analysis.composite)}分 · ${st === 'keep' ? '已通过' : st === 'reject' ? '已淘汰' : '未审查'}${m.analysis.aiAssessed ? ' · TypeSafe:' + (m.analysis.aiRecommendation || 'review') : ''}">
       ${img}
       <span class="bulk-score badge-${effGrade(m)}">${fmt(m.analysis.composite)}</span>
+      ${ai}
       ${sel ? '<span class="bulk-check">✓</span>' : ''}
       <span class="scan-light" title="未扫描"></span>
       <span class="st st-${st === 'keep' ? 'go' : st === 'reject' ? 'no' : 'cond'}"></span>
@@ -1415,13 +1433,99 @@ function closeModel() { $('modelModalBackdrop').classList.add('hidden'); $('mode
 function closeModal() { $('modalBackdrop').classList.add('hidden'); $('modal').classList.add('hidden'); }
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); setTimeout(() => t.classList.add('hidden'), 2600); }
 
+// ---------------- AI 全库审核（TypeSafe 批量评测） ----------------
+let aiRunBusy = false;
+function openAIReview() {
+  $('aiModalBackdrop').classList.remove('hidden');
+  $('aiModal').classList.remove('hidden');
+  renderAIRefresh();
+}
+function closeAIReview() { $('aiModalBackdrop').classList.add('hidden'); $('aiModal').classList.add('hidden'); }
+
+function renderAIRefresh() {
+  const total = MATERIALS.length;
+  const assessed = MATERIALS.filter(m => m.analysis.aiAssessed).length;
+  const todo = total - assessed;
+  const recCount = {
+    keep: MATERIALS.filter(m => m.analysis.aiRecommendation === 'keep').length,
+    review: MATERIALS.filter(m => m.analysis.aiRecommendation === 'review').length,
+    reject: MATERIALS.filter(m => m.analysis.aiRecommendation === 'reject').length
+  };
+  const todoIds = MATERIALS.filter(m => !m.analysis.aiAssessed).map(m => m.id);
+  $('aiModal').innerHTML = `
+    <h2>✦ TypeSafe AI 审核</h2>
+    <div class="sub">调用 Jev 模型对素材做全量结构化评测：J/E/V 三维打分、Hook/出镜/场景分类、合规风险判定，并给出 通过/复核/淘汰 建议。审核结果会自动回填评分与标签。</div>
+    <div class="ai-stats">
+      <div class="ai-stat"><b>${total}</b><span>素材总数</span></div>
+      <div class="ai-stat"><b>${assessed}</b><span>已审核</span></div>
+      <div class="ai-stat"><b>${todo}</b><span>待审核</span></div>
+    </div>
+    <div class="ai-stats">
+      <div class="ai-stat" style="border-color:var(--ok)"><b style="color:var(--ok)">${recCount.keep}</b><span>建议通过</span></div>
+      <div class="ai-stat" style="border-color:var(--warn)"><b style="color:var(--warn)">${recCount.review}</b><span>建议复核</span></div>
+      <div class="ai-stat" style="border-color:var(--err)"><b style="color:var(--err)">${recCount.reject}</b><span>建议淘汰</span></div>
+    </div>
+    <div class="ai-progress"><i id="aiProgFill" style="width:${total ? (assessed / total) * 100 : 0}%"></i></div>
+    <div class="subtle" id="aiProgText">已完成 ${assessed} / ${total} 张</div>
+    <div class="ai-result" id="aiResult"></div>
+    <div class="import-actions">
+      <button class="btn primary" id="btnAIGo" ${todoIds.length && !aiRunBusy ? '' : 'disabled'} onclick="runAIBatch()">⚡ 审核全部 ${todoIds.length} 张未审核素材</button>
+      <button class="btn ghost" onclick="closeAIReview()">关闭</button>
+    </div>`;
+  window.__aiTodoIds = todoIds;
+}
+
+async function runAIBatch() {
+  if (aiRunBusy) return;
+  const ids = window.__aiTodoIds || [];
+  if (!ids.length) return toast('没有待审核素材');
+  aiRunBusy = true;
+  const total = ids.length;
+  const concurrency = Math.max(1, Math.min(4, Math.ceil(total / 20)));
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += 10) chunks.push(ids.slice(i, i + 10));
+  const resEl = $('aiResult');
+  const fill = $('aiProgFill');
+  const txt = $('aiProgText');
+  let done = 0, failedN = 0;
+  const runChunk = async (chunk) => {
+    try {
+      const r = await fetch('/api/analyze-batch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: chunk, concurrency })
+      }).then(x => x.json());
+      done += (r.doneList || []).length;
+      failedN += (r.failed || []).length;
+    } catch { failedN += chunk.length; }
+    const pct = Math.round((done / total) * 100);
+    if (fill) fill.style.width = pct + '%';
+    if (txt) txt.textContent = `已审核 ${done} / ${total} 张${failedN ? ' · 失败 ' + failedN : ''}`;
+    if (resEl) {
+      resEl.textContent = `✦ TypeSafe 批量审核中… 已完成 ${done} / ${total}`;
+      resEl.scrollTop = resEl.scrollHeight;
+    }
+  };
+  for (let i = 0; i < chunks.length; i++) {
+    await runChunk(chunks[i]);
+    await loadData();
+    if (resEl && i < chunks.length - 1) renderAIRefresh();
+  }
+  aiRunBusy = false;
+  await loadData();
+  if (resEl) resEl.textContent = failedN ? `审核完成：成功 ${done}，失败 ${failedN}` : `✅ 审核完成：${done} 张素材已完成 AI 评测`;
+  renderAIRefresh();
+  toast(`AI 审核完成：${done} 张`);
+}
+
 // ---------------- 事件绑定 ----------------
 $('btnAdd').onclick = openAdd;
 $('btnModel').onclick = openModel;
 $('btnExport').onclick = exportAll;
+$('btnAIAll').onclick = openAIReview;
 $('drawerBackdrop').onclick = closeDrawer;
 $('modalBackdrop').onclick = closeModal;
 $('modelModalBackdrop').onclick = closeModel;
+$('aiModalBackdrop').onclick = closeAIReview;
 $('searchBox').oninput = e => { F.q = e.target.value; renderPanel(); renderMain(); };
 $('fMin').oninput = e => { F.minScore = Math.max(0, Math.min(100, +e.target.value || 0)); renderMain(); renderPanel(); };
 $('fMax').oninput = e => { F.maxScore = Math.max(0, Math.min(100, +e.target.value || 100)); renderMain(); renderPanel(); };
@@ -1430,7 +1534,7 @@ $('fClear').onclick = clearFilters;
 $('sortBy').onchange = e => { sortBy = e.target.value; renderMain(); };
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    closeDrawer(); closeModal(); closeModel();
+    closeDrawer(); closeModal(); closeModel(); closeAIReview();
     if (view === 'review' && revMode === 'bulk') bulkClearSel();
     return;
   }
