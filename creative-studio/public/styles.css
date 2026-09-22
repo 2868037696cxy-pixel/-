@@ -269,6 +269,9 @@ textarea{resize:vertical;min-height:56px}
 .rv-chip.todo{background:#eef1f8;color:#6b7594}
 .rv-progress{height:10px;background:#e6e9f2;border-radius:6px;overflow:hidden}
 .rv-progress i{display:block;height:100%;background:linear-gradient(90deg,#6366f1,#22d3ee);border-radius:6px;transition:width .25s}
+/* 简约科技：进度条深底 + 青色发光 */
+.rv-progress.cyber{background:#0b1020;border:1px solid rgba(34,211,238,.22);height:8px}
+.rv-progress.cyber i{background:linear-gradient(90deg,#0891b2,#22d3ee);box-shadow:0 0 8px rgba(34,211,238,.65)}
 .review-stage{display:flex;gap:16px;align-items:flex-start;margin-bottom:16px}
 .review-main{flex:1;min-width:0}
 .rv-frame{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);overflow:hidden}
@@ -315,35 +318,49 @@ textarea{resize:vertical;min-height:56px}
 .rv-modehint{font-size:12px;color:var(--muted)}
 
 /* 批量棋盘 */
+/* 批量棋盘：简约科技风格（深色舞台 + 细青色描边 + 平滑光束） */
 .bulk-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid var(--line);border-radius:14px;padding:10px 14px;margin-bottom:12px}
 .bulk-onlytodo{font-size:12.5px;color:#39415c;display:flex;align-items:center;gap:6px;margin-left:auto;cursor:pointer}
 .bulk-onlytodo input{width:15px;height:15px;accent-color:var(--accent)}
-.bulk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;background:#fff;border:1.5px dashed #c7d2fe;border-radius:16px;padding:12px;min-height:200px}
-.bulk-item{position:relative;aspect-ratio:1/1;border-radius:10px;overflow:hidden;background:#0f1730;cursor:pointer;border:2px solid transparent;transition:border .1s,opacity .15s;display:flex;align-items:center;justify-content:center}
-.bulk-item img{width:100%;height:100%;object-fit:cover}
-.bulk-item:hover{border-color:#a5b4fc}
-.bulk-item.sel{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,.25)}
-.bulk-item.bulk-reject img{opacity:.45;filter:grayscale(.6)}
-.bulk-item.bulk-keep img{opacity:.75}
-.bulk-score{position:absolute;top:4px;left:4px;font-size:9.5px;font-weight:800;color:#fff;padding:1px 5px;border-radius:6px}
-.bulk-check{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;background:rgba(79,70,229,.92);color:#fff;font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;z-index:4}
-.bulk-item .st{position:absolute;bottom:4px;right:4px;width:11px;height:11px}
+
+.scan-stage{background:#0b1020;border:1px solid rgba(34,211,238,.28);border-radius:16px;padding:12px 12px 14px;margin-bottom:12px;transition:border-color .3s}
+.scan-stage.scanning{border-color:rgba(34,211,238,.7);box-shadow:0 0 18px rgba(34,211,238,.12)}
+.scan-stage.done{border-color:rgba(16,185,129,.7);box-shadow:0 0 18px rgba(16,185,129,.14)}
+.scan-hud{display:flex;align-items:center;gap:10px;font-family:ui-monospace,'SF Mono',Consolas,Menlo,monospace;font-size:11.5px;letter-spacing:.06em;color:#7dd3fc;padding:0 2px 10px;border-bottom:1px solid rgba(34,211,238,.14);margin-bottom:12px}
+.hud-led{width:8px;height:8px;border-radius:50%;background:#475569;transition:.2s;flex-shrink:0}
+.hud-led.on{background:#22d3ee;box-shadow:0 0 6px rgba(34,211,238,.9);animation:hudblink 1s ease infinite}
+@keyframes hudblink{50%{opacity:.45}}
+.hud-name{color:#67e8f9;font-weight:600}
+.hud-right{margin-left:auto;display:flex;align-items:center;gap:6px;color:#7dd3fc}
+.hud-right b{color:#a5f3fc;font-weight:600}
+.hud-sep{opacity:.4}
+
+.scan-stage-inner{position:relative;padding:2px}
+.bulk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:7px;background:transparent;border:1px dashed rgba(34,211,238,.16);border-radius:12px;padding:10px;min-height:200px}
+.bulk-item{position:relative;aspect-ratio:1/1;border-radius:9px;overflow:hidden;background:#0f1730;cursor:pointer;border:1.5px solid rgba(148,163,184,.16);transition:border-color .12s,box-shadow .12s,transform .12s;display:flex;align-items:center;justify-content:center}
+.bulk-item img{width:100%;height:100%;object-fit:cover;filter:brightness(.62) saturate(.8);transition:filter .15s}
+.bulk-item:hover{border-color:rgba(34,211,238,.6)}
+.bulk-item.sel{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,.3)}
+.bulk-item.bulk-reject img{opacity:.4;filter:grayscale(.7) brightness(.6)}
+.bulk-item.bulk-keep img{opacity:.85;filter:none}
+.bulk-item.scanned img{filter:none}
+.bulk-score{position:absolute;top:4px;left:4px;font-size:9.5px;font-weight:800;color:#fff;padding:1px 5px;border-radius:5px;background:rgba(15,23,48,.55);backdrop-filter:blur(1px)}
+.bulk-check{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:24px;height:24px;border-radius:50%;background:rgba(79,70,229,.95);color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;z-index:4}
+.bulk-item .st{position:absolute;bottom:4px;right:4px;width:10px;height:10px;border-radius:50%;border:1.5px solid rgba(255,255,255,.7)}
 .bulk-pager{display:flex;align-items:center;gap:14px;justify-content:center;margin-top:12px;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
 .bulk-pager .btn:disabled{opacity:.4;pointer-events:none}
 
-/* 扫描动画：光带逐格扫过 + 红/绿扫描状态灯 */
-.rv-btn.scan{background:linear-gradient(135deg,#06b6d4,#3b82f6);border-color:transparent;color:#fff;box-shadow:0 4px 14px rgba(6,182,212,.35)}
-.rv-btn.scan:hover{filter:brightness(1.06)}
-.bulk-item.scanning{border-color:#22d3ee !important;box-shadow:0 0 16px rgba(34,211,238,.9);z-index:2;animation:scanpulse .24s ease infinite alternate}
-.bulk-item.scanning::after{content:'';position:absolute;left:0;right:0;top:-45%;height:45%;background:linear-gradient(180deg,transparent,rgba(34,211,238,.65),transparent);animation:sweepline .18s linear infinite;pointer-events:none}
-@keyframes sweepline{to{top:115%}}
-@keyframes scanpulse{from{box-shadow:0 0 10px rgba(34,211,238,.7)}to{box-shadow:0 0 22px rgba(34,211,238,1)}}
-/* 扫描状态灯：未扫描=红色，已扫描=绿色 */
-.scan-light{position:absolute;top:4px;right:4px;width:11px;height:11px;border-radius:50%;background:#ef4444;box-shadow:0 0 0 2px rgba(255,255,255,.85),0 0 8px rgba(239,68,68,.85);z-index:3;transition:background .15s}
-.bulk-item.scanned{opacity:.93}
-.bulk-item.scanned .scan-light{background:#10b981;box-shadow:0 0 0 2px rgba(255,255,255,.85),0 0 8px rgba(16,185,129,.85);animation:scangreen .35s ease}
-@keyframes scangreen{0%{transform:scale(1.9)}100%{transform:scale(1)}}
-.bulk-item.scanning .scan-light{background:#22d3ee;box-shadow:0 0 0 2px rgba(255,255,255,.85),0 0 10px rgba(34,211,238,1)}
+/* 扫描光束与逐格点亮（简约） */
+.rv-btn.scan{background:#0e7490;border-color:#0e7490;color:#fff;box-shadow:0 2px 10px rgba(14,116,144,.35)}
+.rv-btn.scan:hover{background:#155e75}
+.bulk-item.scanning{border-color:#22d3ee !important;box-shadow:0 0 12px rgba(34,211,238,.65);transform:scale(1.04);z-index:2}
+.bulk-item.scanning img{filter:none}
+.scan-beam{position:absolute;left:4px;right:4px;height:2px;background:linear-gradient(90deg,transparent,#22d3ee 15%,#a5f3fc 50%,#22d3ee 85%,transparent);box-shadow:0 0 8px rgba(34,211,238,.7);opacity:0;z-index:5;pointer-events:none;transition:top .1s linear,opacity .12s}
+.scan-beam.fire{opacity:1}
+/* 扫描状态灯：未扫描=红点，已扫描=绿点 */
+.scan-light{position:absolute;top:4px;right:4px;width:9px;height:9px;border-radius:50%;background:#ef4444;border:1.5px solid rgba(255,255,255,.7);z-index:3;transition:background .12s,box-shadow .12s}
+.bulk-item.scanned .scan-light{background:#10b981;box-shadow:0 0 5px rgba(16,185,129,.8)}
+.bulk-item.scanning .scan-light{background:#22d3ee;box-shadow:0 0 5px rgba(34,211,238,.9)}
 @media (max-width:900px){
   .review-stage{flex-direction:column}
   .review-side{width:100%;max-height:none}

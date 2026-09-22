@@ -584,20 +584,14 @@ function reviewBulkHTML(list) {
 
   <div class="scan-stage" id="scanStage">
     <div class="scan-hud">
-      <div class="hud-l"><span class="hud-led" id="hudLed"></span>SCAN.SYSTEM <em>v2.0</em></div>
-      <div class="hud-r">
-        <span class="hud-item"><i class="hud-ico">◉</i>V <b id="hudSpeed">120</b>ms</span>
-        <span class="hud-item"><i class="hud-ico">▤</i>BATCH <b id="hudBatch">1/2</b></span>
-        <span class="hud-item hud-progress"><i id="hudPctFill"></i></span>
-        <span class="hud-item hud-pct" id="hudPct">0%</span>
-      </div>
+      <span class="hud-led" id="hudLed">○</span><b class="hud-name">SCAN.SYSTEM</b>
+      <span class="hud-right"><b id="hudPct">0%</b><span class="hud-sep">·</span><span id="hudSpeed">120</span>ms<span class="hud-sep">·</span>BATCH <span id="hudBatch">1/2</span></span>
     </div>
     <div class="scan-stage-inner" id="scanStageInner">
-      <span class="scorner tl"></span><span class="scorner tr"></span><span class="scorner bl"></span><span class="scorner br"></span>
       <div class="bulk-grid">
         ${pageList.map(bulkItemHTML).join('')}
       </div>
-      <div class="scan-beam" id="scanBeam"><i class="beam-core"></i><i class="beam-tail"></i></div>
+      <div class="scan-beam" id="scanBeam"></div>
     </div>
   </div>
   <div class="bulk-pager">
@@ -682,7 +676,7 @@ function startBulkScan() {
   const stage = stageEl();
   if (stage) stage.classList.add('scanning');
   const led = document.getElementById('hudLed');
-  if (led) { led.classList.add('on'); led.textContent = '● SCANNING'; }
+  if (led) { led.classList.add('on'); led.textContent = '◉'; }
   scanTimer = setInterval(scanTick, scanSpeed);
   hudSet((scanIdx / items.length) * 100, scanSpeed, `${bulkPage + 1}/${Math.max(1, Math.ceil(reviewQueue.length / BATCH))}`);
   syncScanUI();
@@ -699,7 +693,9 @@ function stopBulkScan() {
   const stage = stageEl();
   if (stage) stage.classList.remove('scanning');
   const led = document.getElementById('hudLed');
-  if (led) { led.classList.remove('on'); led.textContent = '○ READY'; }
+  if (led) { led.classList.remove('on'); led.textContent = '○'; }
+  const beam = beamEl();
+  if (beam) { beam.classList.remove('fire'); beam.style.top = '0px'; }
   syncScanUI();
 }
 function moveBeam(item) {
