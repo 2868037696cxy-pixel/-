@@ -1698,7 +1698,9 @@ $('btnToggleFilter').onclick = () => {
   filterCollapsed = !filterCollapsed;
   document.body.classList.toggle('filter-collapsed', filterCollapsed);
   $('btnToggleFilter').textContent = filterCollapsed ? '☰' : '✕';
+  $('btnToggleFilter').setAttribute('aria-expanded', String(!filterCollapsed));
 };
+$('btnToggleFilter').textContent = '✕';
 $('searchBox').oninput = e => { F.q = e.target.value; renderPanel(); renderMain(); };
 $('fMin').oninput = e => { F.minScore = Math.max(0, Math.min(100, +e.target.value || 0)); renderMain(); renderPanel(); };
 $('fMax').oninput = e => { F.maxScore = Math.max(0, Math.min(100, +e.target.value || 100)); renderMain(); renderPanel(); };

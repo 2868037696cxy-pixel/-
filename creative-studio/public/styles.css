@@ -200,20 +200,22 @@ b,strong{font-weight:600}
 @keyframes kpiPulse{0%,100%{opacity:1}50%{opacity:.25}}
 
 /* 筛选面板折叠态 */
-body.filter-collapsed .fpanel{width:0;padding:0;border-right:none;overflow:hidden}
-body.filter-collapsed .fpanel *{opacity:0}
+body.filter-collapsed .fpanel{width:0;padding:0;border-right:none}
+body.filter-collapsed .fpanel > *{opacity:0;pointer-events:none}
 body.filter-collapsed .maincol{width:100%}
 
 /* ---- 左侧导航中枢 + 情境筛选 ---- */
 .fpanel{
   width:284px;flex-shrink:0;
   position:sticky;top:114px;height:calc(100vh - 114px);
-  overflow-y:auto;
+  overflow-y:auto;overflow-x:hidden;
   padding:var(--sp-4) var(--sp-3) var(--sp-3);
   background:var(--bg-elev);
   border-right:1px solid var(--line);
-  transition:width .25s var(--ease),padding .25s var(--ease);
+  transition:width .2s var(--ease),padding .2s var(--ease);
 }
+/* 折叠时仅直系容器快速淡出（3 层，避免数百子元素逐帧动画） */
+.fpanel > *{transition:opacity .12s ease,border-color var(--dur)}
 .fpanel::-webkit-scrollbar{width:6px}
 .fpanel::-webkit-scrollbar-thumb{background:transparent;border-width:0}
 .fpanel:hover::-webkit-scrollbar-thumb{background:var(--surface-3)}
@@ -264,8 +266,9 @@ body.filter-collapsed .maincol{width:100%}
 .filters-title::before{content:'';width:4px;height:4px;border-radius:50%;background:var(--accent)}
 .filters-arrow{color:var(--text-3);font-size:10px;transition:transform var(--dur) var(--ease);flex-shrink:0}
 .filters.closed .filters-arrow{transform:rotate(-90deg)}
-.filters-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows .3s var(--ease)}
+.filters-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows .25s var(--ease)}
 .filters.closed .filters-body{grid-template-rows:0fr}
+.filters.closed .filters-inner{padding-bottom:0}
 .filters-inner{overflow:hidden;min-height:0;padding-bottom:10px}
 .filters-tools{
   display:flex;align-items:center;justify-content:space-between;
