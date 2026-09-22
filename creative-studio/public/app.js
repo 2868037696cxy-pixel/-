@@ -16,6 +16,7 @@ let sortBy = 'composite-desc';
 const F = {
   q: '',
   grades: new Set(),    // S/A/B/C/D 多选
+  categories: new Set(),// 品类
   media: new Set(),     // video/image
   channels: new Set(),  // google/meta/tiktok（可投=GO）
   actors: new Set(),
@@ -115,6 +116,7 @@ function filtered() {
   const q = F.q.trim().toLowerCase();
   return MATERIALS.filter(m => {
     if (F.grades.size && !F.grades.has(effGrade(m))) return false;
+    if (F.categories.size && !F.categories.has(m.custom?.category || '未分类')) return false;
     if (F.media.size && !F.media.has(m.basic.mediaType)) return false;
     if (F.actors.size && !F.actors.has(m.analysis.engagement?.actor || '')) return false;
     if (F.hooks.size && !F.hooks.has(m.analysis.hook?.hookType || '无明确钩子')) return false;
@@ -163,6 +165,12 @@ function renderPanel() {
     return `<span class="fchip ${F.grades.has(g.grade) ? 'on' : ''}" onclick="togF('grades','${g.grade}')"><i class="gdot" style="background:${GCOLOR[g.grade]}"></i>${g.grade} · ${g.label}<small>${n}</small></span>`;
   }).join('');
 
+  // 品类
+  const catCount = countBy(m => m.custom?.category || '未分类');
+  $('fCats').innerHTML = Object.entries(catCount).sort((a, b) => b[1] - a[1]).map(([c, n]) =>
+    `<label><input type="checkbox" ${F.categories.has(c) ? 'checked' : ''} onchange="setF('categories',decodeURIComponent('${encodeURIComponent(c)}'),this.checked)">${esc(c)}<span class="cnt">${n}</span></label>`).join('')
+    || '<div class="subtle">暂无分类（详情可设置品类）</div>';
+
   // 素材类型
   const mediaCount = countBy(m => m.basic.mediaType);
   $('fMedia').innerHTML = [['video', '🎬 视频'], ['image', '🖼️ 单图']].map(([k, l]) =>
@@ -196,6 +204,7 @@ function renderPanel() {
   const parts = [];
   if (F.q) parts.push(`搜索“${F.q}”`);
   if (F.grades.size) parts.push('评级 ' + [...F.grades].join('/'));
+  if (F.categories.size) parts.push('品类 ' + [...F.categories].join('/'));
   if (F.media.size) parts.push([...F.media].map(x => x === 'video' ? '视频' : '单图').join('/'));
   if (F.channels.size) parts.push([...F.channels].map(k => CH_NAME[k]).join('或') + ' 可投');
   if (F.actors.size) parts.push('出镜 ' + [...F.actors].join('/'));
@@ -206,7 +215,7 @@ function renderPanel() {
   $('fSummary').innerHTML = parts.length ? `已选 <b>${parts.length}</b> 项：${parts.join(' · ')}` : '当前未筛选（显示全部素材）';
 }
 function clearFilters() {
-  F.q = ''; F.grades.clear(); F.media.clear(); F.channels.clear();
+  F.q = ''; F.grades.clear(); F.categories.clear(); F.media.clear(); F.channels.clear();
   F.actors.clear(); F.hooks.clear(); F.tags.clear();
   F.minScore = 0; F.maxScore = 100; F.riskOnly = false;
   $('searchBox').value = ''; $('fMin').value = ''; $('fMax').value = ''; $('fRiskOnly').checked = false;
@@ -272,10 +281,13 @@ function renderMain() {
   const none = list.length === 0;
   $('empty').classList.toggle('hidden', !none);
   $('emptyText').textContent = MATERIALS.length === 0 ? '素材库为空' : '没有符合条件的素材';
-  if (view === 'grid') renderGrid(list); else renderKanban(list);
+  if (view === 'grid') renderGrid(list);
+  else if (view === 'cats') renderCategoryView(list);
+  else renderKanban(list);
 }
 function renderGrid(list) {
   $('kanban').classList.add('hidden');
+  $('cats').classList.add('hidden');
   $('grid').classList.remove('hidden');
   $('grid').innerHTML = list.map(cardHTML).join('');
 }
@@ -284,6 +296,105 @@ function timeAgo(t) {
   if (s < 60) return '刚刚'; if (s < 3600) return Math.floor(s / 60) + '分前';
   if (s < 86400) return Math.floor(s / 3600) + '时前';
   return Math.floor(s / 86400) + '天前';
+}
+
+// ---------------- 分类状态视图（可视化窗口） ----------------
+function statusOf(m) {
+  // 单素材综合状态：有违禁风险→禁投；否则有可投→可投；有需优化→需优化
+  const risks = m.analysis.policy?.risks || [];
+  if (risks.some(r => r.level === 'critical')) return 'no';
+  const ps = m.analysis.platforms || {};
+  let hasCond = false;
+  for (const k of ['google', 'meta', 'tiktok']) {
+    const v = ps[k]?.verdict;
+    if (v === 'GO') return 'go';
+    if (v === 'COND') hasCond = true;
+  }
+  return hasCond ? 'cond' : 'no';
+}
+const ST_LABEL = { go: '可投放', cond: '需优化', no: '不可投' };
+
+function overviewChartsHTML(list) {
+  // 评级分布
+  const gd = MODEL.grades.map(g => ({ ...g, n: list.filter(m => effGrade(m) === g.grade).length }));
+  const gMax = Math.max(1, ...gd.map(x => x.n));
+  const gradeBar = gd.map(g => `
+    <div class="dist-row">
+      <span class="dist-lbl"><i class="gdot" style="background:${GCOLOR[g.grade]}"></i>${g.grade}级 ${g.label}</span>
+      <div class="dist-bar"><div style="width:${(g.n / gMax) * 100}%;background:${GCOLOR[g.grade]}"></div></div>
+      <b class="dist-n">${g.n}</b>
+    </div>`).join('');
+
+  // 渠道判定分布（每渠道 GO/COND/NO 三段）
+  const chanRows = ['google', 'meta', 'tiktok'].map(k => {
+    const c = { GO: 0, COND: 0, NO: 0 };
+    for (const m of list) c[m.analysis.platforms?.[k]?.verdict || 'NO']++;
+    const total = Math.max(1, c.GO + c.COND + c.NO);
+    return `<div class="dist-row">
+      <span class="dist-lbl">${CH_ICON[k]} ${CH_NAME[k]}</span>
+      <div class="dist-bar stacked">
+        <div style="width:${c.GO / total * 100}%;background:#10b981" title="可投 ${c.GO}"></div>
+        <div style="width:${c.COND / total * 100}%;background:#f59e0b" title="需优化 ${c.COND}"></div>
+        <div style="width:${c.NO / total * 100}%;background:#ef4444" title="不可投 ${c.NO}"></div>
+      </div>
+      <b class="dist-n">${c.GO}/${c.COND}/${c.NO}</b>
+    </div>`;
+  }).join('');
+
+  return `<div class="overview-charts">
+    <div class="chart-card"><h4>评级分布</h4>${gradeBar}</div>
+    <div class="chart-card"><h4>渠道投放状态（可投/需优化/不可投）</h4>${chanRows}</div>
+  </div>`;
+}
+
+function categoryCardHTML(cat, mats) {
+  const avg = fmt(mats.reduce((a, m) => a + m.analysis.composite, 0) / mats.length);
+  const riskN = mats.filter(m => policyRiskCount(m) > 0).length;
+  const stCount = { go: 0, cond: 0, no: 0 };
+  for (const m of mats) stCount[statusOf(m)]++;
+  const gd = MODEL.grades.map(g => ({ ...g, n: mats.filter(m => effGrade(m) === g.grade).length }));
+  const thumbs = mats.slice(0, 12).map(m => {
+    const src = thumbOf(m);
+    const st = statusOf(m);
+    const img = src ? `<img src="${src}" loading="lazy" alt="">` : '<div style="height:100%;display:flex;align-items:center;justify-content:center;font-size:20px">🗂️</div>';
+    return `<div class="catthumb" title="${esc(m.name)} · ${fmt(m.analysis.composite)}分 · ${ST_LABEL[st]}" onclick="event.stopPropagation();openDrawer('${m.id}')">${img}<span class="st st-${st}"></span></div>`;
+  }).join('');
+  const gradeBar = `<div class="gradebar">${gd.filter(g => g.n).map(g => `<i style="flex:${g.n};background:${GCOLOR[g.grade]}" title="${g.grade}级×${g.n}"></i>`).join('')}</div>`;
+  return `<div class="catcard" onclick="gotoCategory('${esc(cat).replace(/'/g, "\\'")}')">
+    <div class="catcard-head">
+      <b class="catname">${esc(cat)}</b>
+      <span class="subtle">${mats.length} 个素材 · 均分 ${avg}</span>
+      ${riskN ? `<span class="tag risk">⚠ ${riskN} 风险</span>` : ''}
+      <span class="catstatus"><i class="st st-go"></i>可投 ${stCount.go} <i class="st st-cond"></i>需优化 ${stCount.cond} <i class="st st-no"></i>禁投 ${stCount.no}</span>
+    </div>
+    <div class="catthumb-strip">${thumbs}</div>
+    ${gradeBar}
+    <div class="subtle" style="margin-top:6px">点击查看该品类全部素材 →</div>
+  </div>`;
+}
+
+function renderCategoryView(list) {
+  $('grid').classList.add('hidden');
+  $('kanban').classList.add('hidden');
+  $('cats').classList.remove('hidden');
+  if (!list.length) { $('cats').innerHTML = ''; return; }
+  // 按品类聚合（未分类的兜底展示）
+  const groups = {};
+  for (const m of list) {
+    const c = m.custom?.category || '未分类';
+    (groups[c] = groups[c] || []).push(m);
+  }
+  const catCards = Object.entries(groups)
+    .sort((a, b) => (a[0] === '未分类' ? 1 : 0) - (b[0] === '未分类' ? 1 : 0) || b[1].length - a[1].length)
+    .map(([cat, mats]) => categoryCardHTML(cat, mats)).join('');
+  $('cats').innerHTML = overviewChartsHTML(list) + catCards;
+}
+function gotoCategory(cat) {
+  // 只保留该品类的筛选并跳回素材墙
+  F.categories = new Set([cat]);
+  setView('grid');
+  renderPanel();
+  toast(`已筛选品类：${cat}`);
 }
 
 // ---------------- 动态看板 ----------------
@@ -324,6 +435,7 @@ function kCardHTML(m) {
 }
 function renderKanban(list) {
   $('grid').classList.add('hidden');
+  $('cats').classList.add('hidden');
   $('kanban').classList.remove('hidden');
   const cols = kanbanCols();
   $('kanban').innerHTML = cols.map(c => {
