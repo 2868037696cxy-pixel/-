@@ -88,13 +88,26 @@ function clPlatforms(m, risks) {
 }
 
 // ---------------- 数据 ----------------
+let DUP = null;          // /api/duplicates 结果
+let dupOfId = {};        // id -> {base, count, sim, isBest}
 async function loadData() {
-  const [mats, mod] = await Promise.all([
+  const [mats, mod, dup] = await Promise.all([
     fetch('/api/materials').then(r => r.json()),
-    fetch('/api/model').then(r => r.json())
+    fetch('/api/model').then(r => r.json()),
+    fetch('/api/duplicates').then(r => r.json())
   ]);
-  MATERIALS = mats; MODEL = mod;
+  MATERIALS = mats; MODEL = mod; DUP = dup;
+  buildDupIndex();
   render();
+}
+function buildDupIndex() {
+  dupOfId = {};
+  if (!DUP?.groups) return;
+  for (const g of DUP.groups) {
+    for (const m of g.members) {
+      dupOfId[m.id] = { base: g.base, count: g.count, sim: m.sim, isBest: m.isBest };
+    }
+  }
 }
 
 const effGrade = m => m.custom?.manualGrade || m.analysis.grade;
@@ -377,6 +390,7 @@ function renderTeardown(m) {
       <div class="td-preview-meta">
         <div class="td-name">${esc(m.name)}</div>
         <div class="td-sub">${b.mediaType === 'video' ? '🎬 视频' : '🖼️ 单图'} · ${b.aspect || '?'}${b.durationSec ? ' · ' + b.durationSec + 's' : ''} · ${b.resolution || '?'}</div>
+        ${dupOfId[m.id] ? `<div class="td-sub" style="color:var(--warn)">⧉ 重复变体 ×${dupOfId[m.id].count}（${esc(dupOfId[m.id].base)}）${dupOfId[m.id].isBest ? ' · 组内最优' : ' · 建议精简'}</div>` : ''}
         <div class="td-score" style="background:${GCOLOR[effGrade(m)]}"><b>${fmt(a.composite)}</b><span>JEV</span></div>
         <div class="td-verdict">${['google', 'meta', 'tiktok'].map(k => { const p = a.platforms?.[k]; return p ? `<span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}"><i>${CH_ICON[k]}</i>${p.verdict}</span>` : ''; }).join('')}</div>
         <button class="td-cta">${esc(a.value?.ctaText || '立即购买')}</button>
@@ -448,6 +462,7 @@ function renderStats() {
   // 侧边栏导航计数
   $('navTotal').textContent = n;
   $('navTodo').textContent = MATERIALS.filter(m => revOf(m) === 'todo').length;
+  $('navDups').textContent = DUP?.groupCount || 0;
 }
 function thumbOf(m) {
   if (m.kind === 'url' && /^(https?:)?\/\//.test(m.ref || '')) return m.ref;
@@ -471,8 +486,13 @@ function cardHTML(m) {
   const aiBadge = m.analysis.aiAssessed
     ? `<span class="ai-chip ${m.analysis.aiRecommendation || 'review'}" title="TypeSafe 建议：${m.analysis.aiRecommendReason || ''}">✦ ${m.analysis.aiRecommendation === 'keep' ? '通过' : m.analysis.aiRecommendation === 'reject' ? '淘汰' : '复核'}</span>`
     : '';
+  const dup = dupOfId[m.id];
+  const dupBadge = dup
+    ? `<span class="dup-badge" title="重复变体 ×${dup.count} · 基名 ${dup.base}${dup.isBest ? ' · 组内最优（建议保留）' : ' · 建议精简'}" onclick="event.stopPropagation();setView('dups')">⧉×${dup.count}</span>`
+    : '';
   return `<article class="card" data-id="${m.id}" draggable="true" onclick="openDrawer('${m.id}')">
     <div class="thumb">${mediaEl}
+      ${dupBadge}
       ${revOf(m) !== 'todo' ? `<div class="rv-badge ${revOf(m)}">${revOf(m) === 'keep' ? '✅ 通过' : '❌ 淘汰'}</div>` : ''}
       <div class="score-badge ${g}"><b>${fmt(a.composite)}</b><span>分</span></div>
       <div class="grade-chip badge-${g}">${g}级${m.custom?.manualGrade ? ' ✍' : ''}</div>
@@ -506,13 +526,58 @@ function renderMain() {
   if (view === 'grid') renderGrid(list);
   else if (view === 'review') renderReview(list);
   else if (view === 'cats') renderCategoryView(list);
+  else if (view === 'dups') renderDuplicates();
   else renderKanban(list);
   renderAnalytics(list);
+}
+function renderDuplicates() {
+  $('grid').classList.add('hidden');
+  $('review').classList.add('hidden');
+  $('cats').classList.add('hidden');
+  $('kanban').classList.add('hidden');
+  $('dups').classList.remove('hidden');
+  const box = $('dups');
+  if (!DUP?.groups?.length) {
+    box.innerHTML = `<div class="dup-empty"><div class="empty-icon">✓</div><p>素材库无重复变体</p><div class="muted">按文件名基名自动归一化检测（剥离 _v000 等版本后缀）</div></div>`;
+    return;
+  }
+  const thumbOfM = m => {
+    const src = m.mediaType === 'video' ? (m.poster || m.ref) : m.ref;
+    return src ? `<img src="${src}" loading="lazy" alt="">` : '<div class="dup-ph">🗂️</div>';
+  };
+  const cards = DUP.groups.map(g => `
+    <div class="dup-card">
+      <div class="dup-card-head">
+        <b class="dup-base">⧉ ${esc(g.base)}</b>
+        <span class="dup-count">${g.count} 个变体</span>
+        <span class="dup-keep">最佳：${esc(g.bestName)} · ${g.bestScore} 分</span>
+      </div>
+      <div class="dup-members">
+        ${g.members.map(m => `
+          <div class="dup-member ${m.isBest ? 'best' : ''}" onclick="openDrawer('${m.id}')" title="${esc(m.name)} · ${m.score} 分 · 相似度 ${m.sim}%">
+            <div class="dup-thumb">${thumbOfM(m)}${m.isBest ? '<i class="dup-best-tag">保留</i>' : ''}</div>
+            <div class="dup-meta">
+              <div class="dup-mname">${esc(m.name)}</div>
+              <div class="dup-mrow"><span class="dup-mscore">${m.score} 分</span><span class="dup-msim">${m.sim}% 相似</span></div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`).join('');
+  box.innerHTML = `
+    <div class="dup-hero">
+      <div class="dup-hero-num"><b>${DUP.rate}%</b><span>重复率</span></div>
+      <div class="dup-hero-item"><b>${DUP.groupCount}</b><span>重复组</span></div>
+      <div class="dup-hero-item"><b>${DUP.involved}</b><span>涉及素材</span></div>
+      <div class="dup-hero-item"><b>${DUP.total - DUP.involved}</b><span>唯一素材</span></div>
+      <div class="dup-hero-note">基于文件名基名归一化检测 · 每组标记最佳变体（建议保留）</div>
+    </div>
+    ${cards}`;
 }
 function renderGrid(list) {
   $('kanban').classList.add('hidden');
   $('cats').classList.add('hidden');
   $('review').classList.add('hidden');
+  $('dups').classList.add('hidden');
   $('grid').classList.remove('hidden');
   $('grid').innerHTML = list.map(cardHTML).join('');
 }
@@ -602,6 +667,7 @@ function renderCategoryView(list) {
   $('grid').classList.add('hidden');
   $('kanban').classList.add('hidden');
   $('review').classList.add('hidden');
+  $('dups').classList.add('hidden');
   $('cats').classList.remove('hidden');
   if (!list.length) { $('cats').innerHTML = ''; return; }
   // 按品类聚合（未分类的兜底展示）
@@ -653,6 +719,7 @@ function renderReview(list) {
   $('grid').classList.add('hidden');
   $('kanban').classList.add('hidden');
   $('cats').classList.add('hidden');
+  $('dups').classList.add('hidden');
   $('empty').classList.add('hidden');
   $('review').classList.remove('hidden');
   if (!list.length) { $('review').innerHTML = reviewDoneHTML(); return; }
@@ -1039,7 +1106,7 @@ function setView(v) {
   if (v === 'review') reviewIdx = 0;   // 进入审片模式从头开始
   document.querySelectorAll('.navitem[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === v));
   $('boardBy').classList.toggle('hidden', v !== 'kanban');
-  $('wsViewLabel').textContent = { grid: '素材墙', review: '审片扫描', cats: '分类状态', kanban: '分类看板' }[v] || '';
+  $('wsViewLabel').textContent = { grid: '素材墙', review: '审片扫描', cats: '分类状态', kanban: '分类看板', dups: '重复排查' }[v] || '';
   renderMain();
 }
 function setBoardBy(v) { boardBy = v; renderKanban(filtered()); }
@@ -1075,6 +1142,7 @@ function renderKanban(list) {
   $('grid').classList.add('hidden');
   $('cats').classList.add('hidden');
   $('review').classList.add('hidden');
+  $('dups').classList.add('hidden');
   $('kanban').classList.remove('hidden');
   const cols = kanbanCols();
   $('kanban').innerHTML = cols.map(c => {

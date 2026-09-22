@@ -78,6 +78,9 @@
         <a class="navitem" data-view="kanban" href="javascript:void(0)" onclick="setView('kanban')">
           <span class="nav-ico">▥</span><span class="nav-label">分类看板</span>
         </a>
+        <a class="navitem" data-view="dups" href="javascript:void(0)" onclick="setView('dups')">
+          <span class="nav-ico">⧉</span><span class="nav-label">重复排查</span><em class="nav-cnt" id="navDups">0</em>
+        </a>
       </nav>
 
       <!-- 导航分组：工具 -->
@@ -261,6 +264,7 @@
             <main id="review" class="review hidden"></main>
             <main id="cats" class="catsview hidden"></main>
             <main id="kanban" class="kanban hidden"></main>
+            <main id="dups" class="dupsview hidden"></main>
             <div id="empty" class="empty hidden">
               <div class="empty-icon">🔍</div>
               <p id="emptyText">素材库为空</p>

@@ -169,6 +169,59 @@ app.get('/api/materials', (req, res) => {
   const rows = db.prepare(`SELECT * FROM materials WHERE status='active' ORDER BY updatedAt DESC`).all();
   res.json(rows.map(rowToMaterial));
 });
+
+// ---- 素材重复率排查（文件名归一化 + 变体分组 + 相似度） ----
+app.get('/api/duplicates', (req, res) => {
+  const rows = db.prepare(`SELECT * FROM materials WHERE status='active'`).all();
+  const round1 = n => Math.round((n || 0) * 10) / 10;
+  // 归一化基名：去扩展名 → 小写 → 剥离版本后缀(_v000 / _010 / -03 / 数字串)
+  const normBase = name => {
+    const s = String(name || '').replace(/\.[^.]+$/, '').toLowerCase()
+      .replace(/[_\s-]+v?\d{2,}$/, '')
+      .replace(/[_\s-]*\d{3}$/, '')
+      .replace(/[_\s-]+$/, '')
+      .trim();
+    return s || String(name || '');
+  };
+  const groups = {};
+  for (const row of rows) {
+    const m = rowToMaterial(row);
+    const base = normBase(m.name);
+    (groups[base] = groups[base] || []).push(m);
+  }
+  const dups = Object.entries(groups)
+    .filter(([, ms]) => ms.length > 1)
+    .map(([base, ms]) => {
+      ms.sort((a, b) => (b.analysis.composite || 0) - (a.analysis.composite || 0));
+      const best = ms[0];
+      // 相似度：同基名基础 74 + 类型/画幅/时长一致性加成
+      const sim = ms.map(m => {
+        let s = 74;
+        if (m.basic.mediaType === best.basic.mediaType) s += 8;
+        if (m.basic.aspect && m.basic.aspect === best.basic.aspect) s += 10;
+        const d1 = m.basic.durationSec || 0, d2 = best.basic.durationSec || 0;
+        if (d1 && d2 && Math.abs(d1 - d2) <= Math.max(2, d2 * 0.1)) s += 8;
+        return Math.min(100, s);
+      });
+      return {
+        base, count: ms.length,
+        bestId: best.id, bestName: best.name, bestScore: round1(best.analysis.composite),
+        members: ms.map((m, i) => ({
+          id: m.id, name: m.name, score: round1(m.analysis.composite),
+          grade: m.analysis.grade || '', ref: m.ref, mediaType: m.basic.mediaType,
+          poster: m.basic.poster || null, aspect: m.basic.aspect || null,
+          sim: sim[i], isBest: i === 0
+        }))
+      };
+    })
+    .sort((a, b) => b.count - a.count);
+  const involved = dups.reduce((s, g) => s + g.count, 0);
+  res.json({
+    rate: rows.length ? Math.round(involved / rows.length * 100) : 0,
+    involved, groupCount: dups.length, total: rows.length,
+    groups: dups
+  });
+});
 app.get('/api/materials/:id', (req, res) => {
   const m = getMaterial(req.params.id);
   if (!m) return res.status(404).json({ error: 'not found' });

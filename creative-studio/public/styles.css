@@ -538,6 +538,102 @@ body.filter-collapsed .maincol{width:100%}
 .ai-chip.keep{color:var(--ok);border-color:var(--ok)}
 .ai-chip.reject{color:var(--err);border-color:var(--err)}
 .ai-chip.review{color:var(--warn);border-color:var(--warn)}
+
+/* 重复变体徽章 */
+.dup-badge{
+  position:absolute;bottom:10px;left:50%;transform:translateX(-50%);
+  font-size:10px;font-weight:800;padding:3px 9px;border-radius:var(--r-pill);
+  background:rgba(23,23,23,.85);border:1px solid var(--warn);
+  color:var(--warn);z-index:3;cursor:pointer;letter-spacing:.03em;
+  font-family:var(--font-mono);white-space:nowrap;
+}
+.dup-badge:hover{background:var(--warn-soft)}
+
+/* ============ 重复排查视图 ============ */
+.dupsview{padding:var(--sp-5);display:flex;flex-direction:column;gap:var(--sp-4)}
+.dup-empty{text-align:center;padding:var(--sp-8) 20px;color:var(--text-3)}
+.dup-empty .empty-icon{font-size:44px;margin-bottom:var(--sp-3);opacity:.7;color:var(--ok)}
+.dup-empty p{font-size:var(--fs-base);color:var(--text-2)}
+.dup-empty .muted{font-size:var(--fs-sm);margin-top:6px;opacity:.8}
+
+.dup-hero{
+  display:flex;align-items:stretch;gap:0;flex-wrap:wrap;
+  background:var(--surface-1);border:1px solid var(--line);
+  border-radius:var(--r-lg);padding:var(--sp-4);
+}
+.dup-hero-num{
+  display:flex;align-items:baseline;gap:10px;
+  padding-right:var(--sp-4);margin-right:var(--sp-4);
+  border-right:1px solid var(--line-soft);
+}
+.dup-hero-num b{
+  font-family:var(--font-mono);font-size:34px;font-weight:800;
+  color:var(--accent-strong);font-variant-numeric:tabular-nums;line-height:1;
+}
+.dup-hero-num span,.dup-hero-item span{
+  font-size:10px;letter-spacing:.14em;color:var(--text-3);
+  font-weight:700;text-transform:uppercase;
+}
+.dup-hero-item{
+  display:flex;flex-direction:column;gap:5px;justify-content:center;
+  padding:0 var(--sp-4);border-right:1px solid var(--line-soft);
+}
+.dup-hero-item:last-of-type{border-right:none}
+.dup-hero-item b{
+  font-family:var(--font-mono);font-size:22px;font-weight:800;
+  color:var(--text-1);font-variant-numeric:tabular-nums;line-height:1;
+}
+.dup-hero-note{
+  display:flex;align-items:center;margin-left:auto;max-width:280px;
+  font-size:10.5px;color:var(--text-3);line-height:1.6;padding-left:var(--sp-4);
+}
+
+.dup-card{background:var(--surface-1);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden}
+.dup-card-head{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:12px 16px;border-bottom:1px solid var(--line-soft);background:var(--bg-elev);
+}
+.dup-base{font-family:var(--font-mono);font-size:13px;font-weight:800;color:var(--text-1)}
+.dup-count{
+  font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--warn);
+  background:var(--warn-soft);padding:2px 8px;border-radius:var(--r-pill);
+}
+.dup-keep{margin-left:auto;font-size:10.5px;color:var(--text-3);font-family:var(--font-mono)}
+.dup-members{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));
+  gap:var(--sp-3);padding:var(--sp-4);
+}
+.dup-member{
+  background:var(--bg-elev);border:1px solid var(--line);
+  border-radius:var(--r-md);overflow:hidden;cursor:pointer;
+  transition:all var(--dur) var(--ease);
+}
+.dup-member:hover{border-color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow-sm)}
+.dup-member.best{
+  border-color:var(--accent);
+  background:linear-gradient(180deg,rgba(45,212,191,.08),var(--bg-elev) 55%);
+}
+.dup-thumb{
+  position:relative;aspect-ratio:4/3;background:var(--surface-2);
+  display:flex;align-items:center;justify-content:center;overflow:hidden;
+}
+.dup-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.dup-ph{font-size:28px;opacity:.5}
+.dup-best-tag{
+  position:absolute;top:8px;left:8px;z-index:2;
+  font-size:9px;font-weight:800;letter-spacing:.08em;
+  padding:2px 7px;border-radius:var(--r-pill);
+  background:var(--accent);color:#06281f;
+}
+.dup-meta{padding:9px 11px}
+.dup-mname{
+  font-size:11px;color:var(--text-2);margin-bottom:5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.dup-mrow{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.dup-mscore{font-family:var(--font-mono);font-size:11px;font-weight:800;color:var(--text-1)}
+.dup-member.best .dup-mscore{color:var(--accent-strong)}
+.dup-msim{font-family:var(--font-mono);font-size:10px;color:var(--text-3)}
 .bulk-ai{
   position:absolute;bottom:4px;left:4px;
   font-size:9px;font-weight:800;padding:1px 5px;border-radius:5px;
