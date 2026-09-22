@@ -29,6 +29,7 @@ export function buildStateText(material) {
     parts.push(`素材形态: ${form}${orient ? '，' + orient : ''}${dim}`);
   }
   parts.push('投放平台: 仅投放 Facebook/Meta Ads 与 Google Ads 两个渠道');
+  parts.push('设计背景: 该素材为无促销设计（不打折/不赠礼/不限时），购买动机完全依赖内容本身（钩子、情绪、产品力）');
   const s = material?.subtitles || [];
   if (s.length) parts.push(`视频字幕/文案: ${s.map(x => x.text).join(' ')}`);
   const an = material?.analysis || {};
@@ -75,11 +76,11 @@ export async function analyzeWithTypeSafe(material) {
     },
     value_score: {
       type: 'score',
-      instructions: '评估【V - Value & CTA 转化闭环】：核心卖点USP是否清晰、价格/优惠引导是否明确、结尾CTA动作指引强弱。',
+      instructions: '评估【V - Value & CTA 转化闭环】。该素材为无促销设计（不打折/不促销），不要因缺少价格优惠而扣分；重点评估：卖点是否清晰可感知、产品价值本身是否足以让用户无需优惠就产生购买动机、CTA 动作指引是否明确。',
       criteria: [
-        '卖点模糊，无明确价格/优惠与CTA',
-        '有卖点说明，但价格或CTA引导一般',
-        'USP清晰，价格/限时优惠明确，CTA强有力'
+        '卖点模糊，价值感知弱，看完不知道为什么要买',
+        '卖点可感知，购买动机中等',
+        '卖点清晰秒懂，产品力本身激发强烈购买动机，CTA 明确'
       ]
     },
     cta_score: {
@@ -96,8 +97,32 @@ export async function analyzeWithTypeSafe(material) {
         comparison: '效果对比型：Before/After 或对比',
         quiz: '问答互动型：提问/互动引发好奇',
         controversy: '争议话题型：制造争议或反常识',
+        visual: '视觉冲击型：产品颜值/画面美感直接抓眼球',
         offer: '优惠直给型：直接给折扣/促销',
         none: '无明确钩子'
+      }
+    },
+    emotion: {
+      type: 'choice',
+      instructions: '判断该素材主要唤起/瞄准的观众主导情绪。该素材为无促销设计，情绪是最核心的驱动力，请基于画面氛围、文案语气与内容主题判断。',
+      criteria: {
+        curiosity: '好奇/悬念 —— 想看下去弄明白是什么、为什么',
+        desire: '渴望/向往 —— 想拥有同款效果或生活方式',
+        anxiety: '焦虑/痛点共鸣 —— "说的就是我"，迫切需要解决',
+        comfort: '信任/安心 —— 真实可信，敢放心买',
+        surprise: '惊讶/震撼 —— 视觉冲击让人停下拇指',
+        neutral: '平淡无感 —— 情绪唤起弱'
+      }
+    },
+    core_appeal: {
+      type: 'choice',
+      instructions: '提炼该素材的核心吸引力：用户被打动、愿意停留并产生兴趣的最主要原因是哪一个（单选最能代表素材灵魂的一项）。',
+      criteria: {
+        visual: '视觉产品力 —— 产品颜值/使用效果直观可见，看一眼就想要',
+        pain_solution: '痛点解决方案 —— 直击问题并清晰给出解法',
+        emotional: '情绪价值 —— 氛围与情绪共鸣驱动，产品是配角',
+        lifestyle: '生活方式认同 —— 场景与身份代入感引发向往',
+        none: '无清晰核心 —— 信息杂乱、缺乏主线'
       }
     },
     actor: {
@@ -208,11 +233,20 @@ export async function analyzeWithTypeSafe(material) {
 
   const HOOK_MAP = {
     pain: '痛点直击型', unboxing: '猎奇拆箱型', comparison: '效果对比型',
-    quiz: '问答互动型', controversy: '争议话题型', offer: '优惠直给型', none: '无明确钩子'
+    quiz: '问答互动型', controversy: '争议话题型', visual: '视觉冲击型',
+    offer: '优惠直给型', none: '无明确钩子'
   };
   const ACTOR_MAP = { western: '欧美真人', asian: '亚洲真人', none: '无真人', cg: '3D动画', ai: 'AI合成' };
   const SCENE_MAP = { indoor: '室内', outdoor: '户外', studio: '工作室', street: '街头', product: '纯产品展示' };
   const BEST_MAP = { fb: 'Meta(FB/IG)', google: 'Google Ads', both: '双平台通用', neither: '两平台均不宜' };
+  const EMOTION_MAP = {
+    curiosity: '好奇悬念', desire: '渴望向往', anxiety: '焦虑共鸣',
+    comfort: '信任安心', surprise: '惊讶震撼', neutral: '平淡无感'
+  };
+  const APPEAL_MAP = {
+    visual: '视觉产品力', pain_solution: '痛点解决', emotional: '情绪价值',
+    lifestyle: '生活方式', none: '无清晰核心'
+  };
 
   const noul = (id, threshold = 0.55) => (pick(id) == null ? null : pick(id) > threshold);
 
@@ -262,6 +296,17 @@ export async function analyzeWithTypeSafe(material) {
     fbVerdict: pfVerdict(fbFit, riskFb),
     googleVerdict: pfVerdict(googleFit, riskGoogle)
   };
+
+  // 素材核心提炼：钩子策略 × 主导情绪 × 核心吸引力（无促销设计下的内容驱动力画像）
+  const hookType = HOOK_MAP[pick('hook_type')] || null;
+  const emotion = EMOTION_MAP[pick('emotion')] || null;
+  const appeal = APPEAL_MAP[pick('core_appeal')] || null;
+  const coreSummary = appeal === '无清晰核心'
+    ? '素材缺乏清晰核心主线，信息杂乱，建议重构'
+    : [hookType, emotion, appeal].filter(Boolean).length
+      ? `以「${[hookType, emotion].filter(Boolean).join(' × ')}」抓人，核心靠「${appeal || '?'}」打动用户`
+      : null;
+  result.core = { hookType, emotion, appeal, summary: coreSummary };
 
   // AI 审核建议：通用违规或双平台政策均受限 → 淘汰；单平台受限 → 按另一平台表现保留/复核；否则按三维均值
   const risks = [result.policy.riskHealth, result.policy.riskMislead, result.policy.riskPolicy];

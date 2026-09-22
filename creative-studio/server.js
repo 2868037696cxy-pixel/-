@@ -362,6 +362,9 @@ async function applyAIResult(m, result) {
   // 双平台投放适配结果（Meta / Google）
   if (result.platform) m.analysis.platform = result.platform;
 
+  // 素材核心提炼（钩子策略 × 主导情绪 × 核心吸引力）
+  if (result.core) m.analysis.core = result.core;
+
   // 合规风险：Noul 判定 → riskState 勾选（critical 类）
   const riskState = m.custom.riskState || {};
   const RULES = { riskHealth: 'health', riskMislead: 'mislead', riskPolicy: 'adult' };
@@ -415,6 +418,16 @@ function localAIResult(m) {
       best: fbFit >= 4.5 ? '双平台通用' : '两平台均不宜',
       fbVerdict: pfVerdict(fbFit),
       googleVerdict: pfVerdict(fbFit)
+    },
+    core: {
+      hookType: a.hook?.hookType && a.hook.hookType !== '无明确钩子' ? a.hook.hookType : null,
+      emotion: hasRisk ? '焦虑共鸣' : (avg >= 7 ? '信任安心' : '平淡无感'),
+      appeal: avg >= 7 ? '痛点解决' : (avg >= 4.5 ? '视觉产品力' : '无清晰核心'),
+      summary: hasRisk
+        ? '以「痛点直击型 × 焦虑共鸣」抓人，核心靠「痛点解决」打动用户（本地启发式，建议 AI 复核）'
+        : (avg >= 7
+          ? '以「真实场景 × 信任安心」抓人，核心靠「痛点解决」打动用户（本地启发式，建议 AI 复核）'
+          : '素材核心主线较弱，建议 AI 复核或重构内容主线')
     },
     policy: {}
   };

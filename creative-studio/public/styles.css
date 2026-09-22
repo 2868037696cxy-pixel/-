@@ -978,6 +978,15 @@ span.ail-thumb{display:flex;align-items:center;justify-content:center;font-size:
 .pv.review{color:var(--warn);background:rgba(245,158,11,.14)}
 .pv.reject{color:var(--err);background:rgba(244,63,94,.12)}
 .pv.best{color:var(--accent-strong);background:rgba(56,189,248,.12)}
+.ail-core-wrap{display:inline-flex;flex:1;min-width:0;flex-shrink:1;overflow:hidden}
+.ail-core{font-size:10px;font-weight:700;color:var(--accent-strong);background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.35);padding:1.5px 7px;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;opacity:0;transition:opacity .2s}
+.ail-row.done .ail-core{opacity:1}
+.core-box{margin-top:12px;padding-top:12px;border-top:1px dashed rgba(128,140,160,.35)}
+.core-chips{display:flex;gap:6px;flex-wrap:wrap}
+.core-chip{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:4px;color:var(--accent-strong);background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.3)}
+.core-chip.emo{color:#8b5cf6;background:rgba(139,92,246,.1);border-color:rgba(139,92,246,.35)}
+.core-summary{margin:8px 0 0;font-size:12px;line-height:1.55;color:var(--text-2)}
+.core-note{margin:5px 0 0;font-size:10px;color:var(--text-3);letter-spacing:.02em}
 .ail-state{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.08em;color:var(--text-3);width:64px;text-align:right;flex-shrink:0}
 .ail-row.active .ail-state{color:var(--accent-strong);animation:hudblink 1s ease infinite}
 .ail-row.done .ail-state{color:var(--ok)}

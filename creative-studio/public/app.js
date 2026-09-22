@@ -761,6 +761,21 @@ function reviewSideHTML(m) {
   const aiBox = m.analysis.aiAssessed
     ? (() => {
         const pf = m.analysis.platform;
+        const core = m.analysis.core;
+        const coreChips = core
+          ? [
+              core.hookType ? `<span class="core-chip">钩子 · ${esc(core.hookType)}</span>` : '',
+              core.emotion ? `<span class="core-chip emo">情绪 · ${esc(core.emotion)}</span>` : '',
+              core.appeal ? `<span class="core-chip">诉求 · ${esc(core.appeal)}</span>` : ''
+            ].filter(Boolean).join('')
+          : '';
+        const coreBox = core?.summary
+          ? `<div class="core-box">
+              <div class="core-chips">${coreChips}</div>
+              <p class="core-summary">${esc(core.summary)}</p>
+              <p class="core-note">无促销设计 · 购买动机依赖内容本身（钩子/情绪/产品力）</p>
+            </div>`
+          : '';
         const pvTxt = v => (v === 'pass' ? '可投' : v === 'reject' ? '受限' : '复核');
         const pv = pf
           ? `<div class="plat-verdicts">
@@ -775,6 +790,7 @@ function reviewSideHTML(m) {
           <span class="ai-advice-tag ${m.analysis.aiRecommendation || 'review'}">${m.analysis.aiRecommendation === 'keep' ? '✅ 建议通过' : m.analysis.aiRecommendation === 'reject' ? '❌ 建议淘汰' : '🔍 建议人工复核'}</span>
           <p class="subtle">${esc(m.analysis.aiRecommendReason || '')}</p>
         </div>
+        ${coreBox}
         ${pv}
       </div>`;
       })()
@@ -1646,10 +1662,15 @@ function aiRowHTML(m, i, finished) {
     ? `<span class="ail-plat ${pf.fbVerdict || ''}" title="Meta 适配 ${pf.fbFit ?? '?'}/10 · ${pf.fbVerdict === 'pass' ? '可投' : pf.fbVerdict === 'reject' ? '受限' : '复核'}">FB</span>` +
       `<span class="ail-plat ${pf.googleVerdict || ''}" title="Google 适配 ${pf.googleFit ?? '?'}/10 · ${pf.googleVerdict === 'pass' ? '可投' : pf.googleVerdict === 'reject' ? '受限' : '复核'}">GG</span>`
     : '';
+  const core = m.analysis.core;
+  const coreBadge = core?.summary
+    ? `<span class="ail-core" title="${esc(core.summary)}">✦ ${esc(core.emotion || core.appeal || '核心')}</span>`
+    : '';
   return `<div class="ail-row${finished ? ' done' : ''}" data-id="${m.id}">
     <span class="ail-idx">${String(i + 1).padStart(2, '0')}</span>
     ${thumb}
     <span class="ail-name" title="${esc(m.name)}">${esc(m.name)}</span>
+    <span class="ail-core-wrap" data-c>${finished ? coreBadge : ''}</span>
     <span class="ail-plats" data-p>${finished ? pfb : ''}</span>
     <span class="ail-verdict${finished ? ` show ${rec || 'review'}` : ''}" data-v>${finished ? vTxt : ''}</span>
     <span class="ail-state" data-s>${finished ? 'DONE' : 'QUEUED'}</span>
