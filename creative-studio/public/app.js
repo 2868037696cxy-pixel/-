@@ -1414,7 +1414,11 @@ function csvHead() {
 }
 function csvRow(m) {
   const a = m.analysis;
-  const q = x => '"' + String(x ?? '').replace(/"/g, '""') + '"';
+  const q = x => {
+    let s = String(x ?? '');
+    if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = "'" + s;
+    return '"' + s.replace(/"/g, '""') + '"';
+  };
   return [
     m.id, m.name, m.basic.mediaType, m.basic.aspect || '', m.basic.durationSec || '', m.basic.resolution || '',
     a.composite, a.grade, m.custom?.manualGrade || '',
