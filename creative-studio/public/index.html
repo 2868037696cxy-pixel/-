@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JEV Creative Studio · 跨境电商素材评分分类工作台</title>
+<title>JEV Creative Workbench · 跨境电商素材评分分类工作台</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -13,37 +13,52 @@
     <div class="brand">
       <div class="logo">JEV</div>
       <div class="brand-text">
-        <h1>Creative Studio</h1>
-        <span>跨境电商素材评分分类工作台</span>
+        <h1>Creative Workbench</h1>
+        <span>跨境电商素材评分分类工作台 · J/E/V 黄金三维引擎</span>
       </div>
     </div>
     <div class="stats">
       <div class="stat"><b id="statTotal">0</b><span>素材总数</span></div>
-      <div class="stat"><b id="statAvg">0</b><span>平均分</span></div>
+      <div class="stat"><b id="statAvg">--</b><span>平均分</span></div>
+      <div class="stat"><b id="statTop">0</b><span>S/A 级</span></div>
+      <div class="stat" style="color:#fda4af"><b id="statRisk">0</b><span>风险素材</span></div>
       <div class="stat"><b id="statGo">0</b><span>可投放</span></div>
-      <div class="stat"><b id="statCond">0</b><span>需优化</span></div>
-      <div class="stat"><b id="statNo">0</b><span>不可投</span></div>
     </div>
     <div class="top-actions">
+      <button class="btn ghost" id="btnExport">导出 CSV</button>
       <button class="btn ghost" id="btnModel">评分模型</button>
       <button class="btn primary" id="btnAdd">+ 导入素材</button>
     </div>
   </header>
 
-  <!-- 工具/筛选条 -->
+  <!-- 视图切换 + 筛选 -->
   <section class="toolbar">
-    <div class="searchwrap">
-      <input id="searchBox" class="input" placeholder="搜索名称 / 标签 / 备注…">
-    </div>
-    <div class="filters">
-      <select id="filterGrade" class="select"><option value="">全部分级</option></select>
-      <select id="filterMedia" class="select">
-        <option value="">全部类型</option><option value="image">图文</option>
-        <option value="video">视频</option><option value="carousel">轮播</option>
+    <div class="viewtabs">
+      <button class="vtab active" data-view="grid" onclick="setView('grid')">素材大盘</button>
+      <button class="vtab" data-view="kanban" onclick="setView('kanban')">动态看板</button>
+      <select id="boardBy" class="select boardby hidden" onchange="setBoardBy(this.value)">
+        <option value="grade">按评级 S/A/B/C/D</option>
+        <option value="channel">按投放渠道</option>
+        <option value="hook">按 Hook 类型</option>
       </select>
-      <select id="filterVerdict" class="select">
-        <option value="">投放状态(全部)</option><option value="GO">可投放</option>
-        <option value="COND">需优化</option><option value="NO">不可投放</option>
+    </div>
+    <div class="searchwrap"><input id="searchBox" class="input" placeholder="搜索名称 / 标签 / 痛点 / 备注…"></div>
+    <div class="filters">
+      <select id="fGrade" class="select"><option value="">全部分级</option></select>
+      <select id="fChannel" class="select">
+        <option value="">渠道:全部</option>
+        <option value="google">Google 可投</option>
+        <option value="meta">Meta 可投</option>
+        <option value="tiktok">TikTok 可投</option>
+      </select>
+      <select id="fMedia" class="select">
+        <option value="">类型:全部</option><option value="video">视频</option><option value="image">单图</option>
+      </select>
+      <select id="fActor" class="select"><option value="">出镜:全部</option></select>
+      <select id="fRange" class="select">
+        <option value="">得分:全部</option>
+        <option value="90-100">90-100</option><option value="80-89">80-89</option>
+        <option value="70-79">70-79</option><option value="55-69">55-69</option><option value="0-54">0-54</option>
       </select>
       <select id="sortBy" class="select">
         <option value="composite-desc">综合分 高→低</option>
@@ -54,16 +69,26 @@
     </div>
   </section>
 
-  <!-- 素材网格 -->
+  <!-- 标签云 -->
+  <section id="tagCloudBar" class="tagcloud-bar">
+    <span class="tclabel">标签图谱</span>
+    <div id="tagCloud" class="tagcloud"></div>
+  </section>
+
+  <!-- 素材大盘 -->
   <main id="grid" class="grid"></main>
+
+  <!-- 动态看板 -->
+  <main id="kanban" class="kanban hidden"></main>
+
   <div id="empty" class="empty hidden">
     <div class="empty-icon">📦</div>
     <p>素材库为空</p>
-    <p class="muted">点击右上角「导入素材」开始建立你的素材评分库</p>
+    <p class="muted">点击右上角「导入素材」：本地上传 / 扫描本地文件夹 / 粘贴链接</p>
   </div>
 </div>
 
-<!-- 详情抽屉 -->
+<!-- 详情工作室 -->
 <div id="drawerBackdrop" class="drawer-backdrop hidden"></div>
 <aside id="drawer" class="drawer hidden"></aside>
 

@@ -1,436 +1,809 @@
-// ===== JEV Creative Studio 前端 =====
-const api = {
-  materials: '/api/materials',
-  model: '/api/model',
-  import: '/api/import',
-  upload: '/api/upload',
-};
+// =============================================================
+// JEV Creative Workbench · 前端逻辑
+// =============================================================
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => Math.round(n * 10) / 10;
+
 let MATERIALS = [];
-let MODEL = null; // {weights, dimensions, descriptions, rules, grades}
-let filters = { grade:'', media:'', verdict:'', q:'' };
+let MODEL = null;   // {weights, labels, enums, policyRules, grades, ai, caps}
+let view = 'grid';
+let boardBy = 'grade';
+let selectedId = null;
+const f = { q: '', grade: '', channel: '', media: '', actor: '', range: '', tags: new Set() };
 let sortBy = 'composite-desc';
-let selected = null;
 
-const $ = (id) => document.getElementById(id);
+const GCOLOR = { S: '#10b981', A: '#22c55e', B: '#0ea5e9', C: '#f59e0b', D: '#ef4444' };
+const CH_ICON = { google: 'G', meta: 'M', tiktok: 'T' };
+const CH_NAME = { google: 'Google', meta: 'Meta', tiktok: 'TikTok' };
 
-// ---------- 客户端重算（镜像后端逻辑，用于滑块实时预览） ----------
-function clientComposite(dims, weights){
-  const keys = Object.keys(weights||{});
-  let total=0, ws=0;
-  for(const k of keys){ const w=+weights[k]||0, v=+dims[k]??0; total+=w*v; ws+=w; }
-  return ws? total/ws : 0;
+// ---------------- 客户端镜像计算（实时预览用） ----------------
+function clComputeComposite(a) {
+  const w = MODEL.weights;
+  const sum = w.j + w.e + w.v;
+  const s = ((a.hook?.score || 0) * w.j + (a.engagement?.score || 0) * w.e + (a.value?.score || 0) * w.v) / sum;
+  return fmt(s * 10);
 }
-function clientGrade(score){
-  return (MODEL.grades||[]).find(b=>score>=b.min) || MODEL.grades[MODEL.grades.length-1] || {grade:'D',label:'不合格'};
+function clGrade(score) { return MODEL.grades.find(b => score >= b.min) || MODEL.grades[MODEL.grades.length - 1]; }
+function clPolicyScore(risks) {
+  const c = risks.filter(r => r.level === 'critical').length, w = risks.filter(r => r.level === 'warning').length;
+  return Math.max(1, Math.min(10, fmt(10 - c * 4 - w * 1.2)));
 }
-function clientVerdict(dims, score, flags, type){
-  const rules = MODEL.rules||[];
-  const critical = flags.filter(f=>{const r=rules.find(x=>x.key===f.key);return r&&r.severity==='critical';});
-  const warning = flags.filter(f=>{const r=rules.find(x=>x.key===f.key);return r&&r.severity==='warning';});
-  const g={verdict:'NO',reasons:[]}, fb={verdict:'NO',reasons:[]};
-  critical.forEach(f=>{const r=rules.find(x=>x.key===f.key);(g.reasons).push('违禁:'+(r?r.label:f.key));(fb.reasons).push('违禁:'+(r?r.label:f.key));});
-  if(!critical.length){
-    if(score>=80){g.verdict='GO';fb.verdict='GO';g.reasons.push('综合评分优秀');fb.reasons.push('综合评分优秀');}
-    else if(score>=70){g.verdict='GO';fb.verdict='GO';g.reasons.push('评分达标,建议测试');fb.reasons.push('评分达标,建议测试');}
-    else if(score>=55){g.verdict='COND';fb.verdict='COND';g.reasons.push('建议优化钩子/CTA后投放');fb.reasons.push('建议优化钩子/CTA后投放');}
-    else {g.verdict='NO';fb.verdict='NO';g.reasons.push('综合评分过低');fb.reasons.push('综合评分过低');}
-  }
-  warning.forEach(f=>{const r=rules.find(x=>x.key===f.key);if(g.verdict==='GO')g.verdict='COND';if(fb.verdict==='GO')fb.verdict='COND';g.reasons.push('风险提示:'+(r?r.label:f.key));fb.reasons.push('风险提示:'+(r?r.label:f.key));});
-  return {google:g, fb};
+function clNative(a) {
+  const e = a.engagement || {}; let s = 5;
+  if (e.actor === '欧美真人' || e.actor === '亚洲真人') s += 2.5;
+  else if (e.actor === '3D动画') s += 0.5;
+  else if (e.actor === '无真人' || e.actor === 'AI合成') s -= 1.5;
+  if ((e.trust || []).includes('UGC真人出镜')) s += 1.5;
+  if (e.scene === '室内' || e.scene === '街头') s += 0.5;
+  if (a.value?.offer && a.value.offer !== '无促销') s -= 1;
+  return Math.max(0, Math.min(10, s));
 }
-function fmtScore(s){ return Math.round(s*10)/10; }
+function clPlatforms(m, risks) {
+  const a = m.analysis, w = MODEL.weights.platforms, basic = m.basic;
+  const j = a.hook?.score || 0, e = a.engagement?.score || 0, v = a.value?.score || 0;
+  const P = clPolicyScore(risks), nat = clNative(a);
+  const critical = risks.filter(r => r.level === 'critical'), warning = risks.filter(r => r.level === 'warning');
+  const mk = (pw) => {
+    let raw = j * pw.hook + e * pw.engagement + v * pw.value + P * pw.policy + (pw.native ? nat * pw.native : 0);
+    let wsum = pw.hook + pw.engagement + pw.value + pw.policy + (pw.native || 0);
+    let fit = fmt(raw / wsum * 10);
+    const reasons = [];
+    const asp = basic.aspect;
+    if (pw.native) { if (asp === '9:16') { fit += 5; reasons.push('竖屏原生形态友好'); } }
+    if (!pw.native && pw.value === w.google.value) {
+      if (asp === '1:1' || asp === '16:9') { fit += 4; reasons.push('画幅兼容 YouTube/PMax'); }
+      if (basic.resolution === 'FHD' || basic.resolution === '4K') { fit += 3; reasons.push('高画质利于 YouTube'); }
+    }
+    if (pw.hook === w.meta.hook && (e.trust || []).includes('UGC真人出镜')) { fit += 3; reasons.push('UGC 社交信任感强'); }
+    fit = Math.max(0, Math.min(100, fmt(fit)));
+    let verdict = fit >= 72 ? 'GO' : fit >= 58 ? 'COND' : 'NO';
+    if (critical.length) { verdict = 'NO'; reasons.unshift('违禁(一票否决)'); }
+    for (const rw of warning) if (verdict === 'GO') verdict = 'COND';
+    return { fit, verdict, reasons };
+  };
+  // 区分公式：meta/tiktok 带 native,google 不带 → 用 hash 判断
+  const g = mk({ hook: w.google.hook, engagement: w.google.engagement, value: w.google.value, policy: w.google.policy });
+  const meta = mk({ hook: w.meta.hook, engagement: w.meta.engagement, value: w.meta.value, policy: w.meta.policy, native: 0.34 });
+  const tiktok = mk({ hook: w.tiktok.hook, engagement: w.tiktok.engagement, value: w.tiktok.value, policy: w.tiktok.policy, native: w.tiktok.native });
+  return { google: g, meta, tiktok };
+}
 
-// ---------- 数据加载 ----------
-async function loadData(){
-  const [mats, mod] = await Promise.all([fetch(api.materials).then(r=>r.json()), fetch(api.model).then(r=>r.json())]);
+// ---------------- 数据 ----------------
+async function loadData() {
+  const [mats, mod] = await Promise.all([
+    fetch('/api/materials').then(r => r.json()),
+    fetch('/api/model').then(r => r.json())
+  ]);
   MATERIALS = mats; MODEL = mod;
-  initFilters();
+  initSelects();
   render();
 }
-function initFilters(){
-  if(!MODEL.grades) return;
-  const sel=$('filterGrade');
-  sel.innerHTML='<option value="">全部分级</option>'+MODEL.grades.map(g=>`<option value="${g.grade}">${g.grade} 级 · ${g.label}</option>`).join('');
+function initSelects() {
+  $('fGrade').innerHTML = '<option value="">全部分级</option>' + MODEL.grades.map(g => `<option value="${g.grade}">${g.grade} 级 · ${g.label}</option>`).join('');
+  $('fActor').innerHTML = '<option value="">出镜:全部</option>' + MODEL.enums.actor.map(x => `<option>${x}</option>`).join('');
 }
 
-// ---------- 渲染 ----------
-function render(){
-  renderStats();
-  renderGrid();
+const effGrade = m => m.custom?.manualGrade || m.analysis.grade;
+const effChannel = m => m.custom?.manualChannel || bestChannel(m);
+function bestChannel(m) {
+  const ps = m.analysis.platforms || {};
+  let best = null, bf = -1;
+  for (const k of ['google', 'meta', 'tiktok']) {
+    const p = ps[k];
+    if (!p) continue;
+    const s = p.verdict === 'GO' ? p.fit + 30 : p.verdict === 'COND' ? p.fit : p.fit - 30;
+    if (s > bf) { bf = s; best = k; }
+  }
+  return best;
 }
-function renderStats(){
-  const n=MATERIALS.length;
-  $('statTotal').textContent=n;
-  $('statAvg').textContent = n? fmtScore(MATERIALS.reduce((a,m)=>a+m.composite,0)/n) : '--';
-  $('statGo').textContent=MATERIALS.filter(m=>m.verdict.google.verdict==='GO').length;
-  $('statCond').textContent=MATERIALS.filter(m=>m.verdict.google.verdict==='COND').length;
-  $('statNo').textContent=MATERIALS.filter(m=>m.verdict.google.verdict==='NO').length;
-}
-function filtered(){
-  const q=filters.q.trim().toLowerCase();
-  let arr=MATERIALS.filter(m=>{
-    if(filters.grade && m.grade!==filters.grade) return false;
-    if(filters.media && m.mediaType!==filters.media) return false;
-    if(filters.verdict && m.verdict.google.verdict!==filters.verdict) return false;
-    if(q){
-      const hay=(m.name+' '+(m.tags||[]).join(' ')+' '+(m.customTags||[]).join(' ')+' '+(m.notes||'')).toLowerCase();
-      if(!hay.includes(q)) return false;
+const flatTags = m => [...(m.analysis.tags?.basic || []), ...(m.analysis.tags?.content || []), ...(m.analysis.tags?.strategy || []), ...(m.analysis.tags?.advice || []), ...(m.custom?.customTags || [])];
+const policyRiskCount = m => (m.analysis.policy?.risks || []).length;
+
+// ---------------- 筛选 ----------------
+function filtered() {
+  const q = f.q.trim().toLowerCase();
+  return MATERIALS.filter(m => {
+    if (f.grade && effGrade(m) !== f.grade) return false;
+    if (f.channel && m.analysis.platforms?.[f.channel]?.verdict !== 'GO') return false;
+    if (f.media && m.basic.mediaType !== f.media) return false;
+    if (f.actor && m.analysis.engagement?.actor !== f.actor) return false;
+    if (f.range) {
+      const [lo, hi] = f.range.split('-').map(Number);
+      if (m.analysis.composite < lo || m.analysis.composite > hi) return false;
+    }
+    for (const t of f.tags) if (!flatTags(m).includes(t)) return false;
+    if (q) {
+      const hay = (m.name + ' ' + flatTags(m).join(' ') + ' ' + (m.analysis.engagement?.painPoint || '') + ' ' + (m.custom?.notes || '')).toLowerCase();
+      if (!hay.includes(q)) return false;
     }
     return true;
-  });
-  const [field,dir]=sortBy.split('-');
-  arr.sort((a,b)=>{
-    if(field==='composite') return dir==='desc'? b.composite-a.composite : a.composite-b.composite;
-    if(field==='updated') return b.updatedAt-a.updatedAt;
-    if(field==='name') return a.name.localeCompare(b.name,'zh');
+  }).sort((a, b) => {
+    const [field, dir] = sortBy.split('-');
+    if (field === 'composite') return dir === 'desc' ? b.analysis.composite - a.analysis.composite : a.analysis.composite - b.analysis.composite;
+    if (field === 'updated') return b.updatedAt - a.updatedAt;
+    if (field === 'name') return a.name.localeCompare(b.name, 'zh');
     return 0;
   });
-  return arr;
 }
-function thumbSrc(m){
-  if((m.kind==='url') && /^(https?:)?\/\//.test(m.ref||'')) return m.ref;
-  if(m.kind==='local' && m.ref) return m.ref;
+
+// ---------------- 渲染 ----------------
+function render() {
+  renderStats(); renderTagCloud();
+  if (view === 'grid') renderGrid(); else renderKanban();
+}
+function renderStats() {
+  const n = MATERIALS.length;
+  $('statTotal').textContent = n;
+  $('statAvg').textContent = n ? fmt(MATERIALS.reduce((a, m) => a + m.analysis.composite, 0) / n) : '--';
+  $('statTop').textContent = MATERIALS.filter(m => ['S', 'A'].includes(effGrade(m))).length;
+  $('statRisk').textContent = MATERIALS.filter(m => policyRiskCount(m) > 0).length;
+  $('statGo').textContent = MATERIALS.filter(m => ['google', 'meta', 'tiktok'].some(k => m.analysis.platforms?.[k]?.verdict === 'GO')).length;
+}
+function thumbOf(m, forKanban = false) {
+  if (m.kind === 'url' && /^(https?:)?\/\//.test(m.ref || '')) return m.ref;
+  if (m.kind !== 'url') {
+    if (m.basic?.mediaType === 'video') return m.basic.poster || m.ref;
+    return m.ref;
+  }
   return null;
 }
-function cardHTML(m){
-  const src=thumbSrc(m);
-  const g=m.gradeInfo||{label:m.grade};
-  const tagList=(m.tags||[]).concat(m.customTags||[]).slice(0,6);
-  const gv=m.verdict.google.verdict, fv=m.verdict.fb.verdict;
-  const vCls={GO:'g',COND:'y',NO:'r'};
-  const media='<i class="fileicon">'+(m.mediaType==='video'?'🎬':m.mediaType==='carousel'?'🗂️':'🖼️')+'</i>';
-  const mediaHtml = src
-    ? (m.mediaType==='video'
-      ? `<video src="${src}" muted loop preload="metadata" onmouseenter="this.play()" onmouseleave="this.pause()"></video>`
-      : `<img src="${src}" loading="lazy" alt="">`)
-    : `<div style="height:100%;display:flex;align-items:center;justify-content:center;font-size:44px;color:#c7d2fe;background:#eef1f8">${m.mediaType==='video'?'🎬':'🗂️'}</div>`;
-  return `<article class="card" data-id="${m.id}" onclick="openDrawer('${m.id}')">
-    <div class="thumb">
-      ${mediaHtml}
-      <div class="score-badge ${m.grade}"><b>${fmtScore(m.composite)}</b><span>分</span></div>
-      <div class="grade-chip badge-${m.grade}">${m.grade}级</div>
+function cardHTML(m) {
+  const src = thumbOf(m);
+  const g = effGrade(m);
+  const a = m.analysis;
+  const plats = ['google', 'meta', 'tiktok'].map(k => a.platforms?.[k]).filter(Boolean);
+  const tagList = [...(a.tags?.advice || []).slice(0, 1), ...(a.tags?.strategy || []).slice(0, 2), ...(a.tags?.content || []).slice(0, 2)];
+  const mediaEl = !src ? `<div style="height:100%;display:flex;align-items:center;justify-content:center;font-size:44px">${a?.engagement?.beforeAfter ? '📷' : '🗂️'}</div>`
+    : m.basic.mediaType === 'video'
+      ? `<video src="${m.ref}" poster="${m.basic.poster || ''}" muted loop preload="metadata" onmouseenter="this.play()" onmouseleave="this.pause();this.currentTime=0"></video>`
+      : `<img src="${src}" loading="lazy" alt="">`;
+  const vChip = (p, k) => `<span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}" title="${esc(p.reasons.join('；'))}"><i>${CH_ICON[k]}</i>${fmt(p.fit)}</span>`;
+  const riskCls = policyRiskCount(m) ? 'risk' : '';
+  return `<article class="card" data-id="${m.id}" draggable="true" onclick="openDrawer('${m.id}')">
+    <div class="thumb">${mediaEl}
+      <div class="score-badge ${g}"><b>${fmt(a.composite)}</b><span>分</span></div>
+      <div class="grade-chip badge-${g}">${g}级${m.custom?.manualGrade ? ' ✍' : ''}</div>
     </div>
     <div class="card-body">
-      <div class="card-title">${m.name}</div>
-      <div class="mini-bars">${(['hook','message','visual','pacing','cta']).map(k=>`<i><b style="width:${m.dims[k]}%"></b></i>`).join('')}</div>
-      <div class="verdicts">
-        <span class="vchip ${vCls[gv]}"><i>G</i> ${gv==='GO'?'可投':gv==='COND'?'需优化':'禁投'}</span>
-        <span class="vchip ${vCls[fv]}"><i>F</i> ${fv==='GO'?'可投':fv==='COND'?'需优化':'禁投'}</span>
+      <div class="card-title">${esc(m.name)}</div>
+      <div class="jev-bars">
+        <i class="j"><div class="jb j" style="width:${(a.hook?.score || 0) * 10}%"></div></i>
+        <i class="e"><div class="jb e" style="width:${(a.engagement?.score || 0) * 10}%"></div></i>
+        <i class="v"><div class="jb v" style="width:${(a.value?.score || 0) * 10}%"></div></i>
       </div>
-      <div class="tags">${tagList.map(t=>`<span class="tag ${/违禁|高风险/.test(t)?'risk':/重点|优秀|强钩子|高可信/.test(t)?'hot':''}">${t}</span>`).join('')||''}</div>
-      <div class="card-foot"><span>${media} ${m.mediaType==='video'?'视频':'图文'}${m.category&&m.category!=='未分类'?' · '+m.category:''}</span><span>${timeAgo(m.updatedAt)}</span></div>
+      <div class="verdicts">${plats.map((p, i) => vChip(p, ['google', 'meta', 'tiktok'][i])).join('')}</div>
+      <div class="tags">${tagList.map(t => `<span class="tag ${/风险|违禁/.test(t) ? 'risk' : /建议/.test(t) ? 'advice' : ''}">${esc(t)}</span>`).join('')}</div>
+      <div class="card-foot">
+        <span>${m.basic.mediaType === 'video' ? '🎬 视频' : '🖼️ 单图'}${a.engagement?.actor ? ' · ' + esc(a.engagement.actor) : ''}</span>
+        <span class="${riskCls}">${policyRiskCount(m) ? '⚠ ' + policyRiskCount(m) + ' 风险' : timeAgo(m.updatedAt)}</span>
+      </div>
     </div>
   </article>`;
 }
-function renderGrid(){
-  const list=filtered();
-  $('grid').innerHTML=list.map(cardHTML).join('');
-  $('empty').classList.toggle('hidden', list.length>0);
-  $('grid').classList.toggle('hidden', list.length===0);
+function renderGrid() {
+  const list = filtered();
+  $('grid').innerHTML = list.map(cardHTML).join('');
+  $('kanban').classList.add('hidden');
+  $('grid').classList.remove('hidden');
+  $('empty').classList.toggle('hidden', list.length > 0);
 }
-function timeAgo(t){
-  if(!t) return '';
-  const s=(Date.now()-t)/1000;
-  if(s<60) return '刚刚';
-  if(s<3600) return Math.floor(s/60)+' 分钟前';
-  if(s<86400) return Math.floor(s/3600)+' 时前';
-  return Math.floor(s/86400)+' 天前';
+function timeAgo(t) {
+  const s = (Date.now() - t) / 1000;
+  if (s < 60) return '刚刚'; if (s < 3600) return Math.floor(s / 60) + '分前';
+  if (s < 86400) return Math.floor(s / 3600) + '时前';
+  return Math.floor(s / 86400) + '天前';
 }
 
-// ---------- 抽屉 ----------
-function openDrawer(id){
-  const m=MATERIALS.find(x=>x.id===id); if(!m) return;
-  selected=m;
+// ---------------- 标签云 ----------------
+function renderTagCloud() {
+  const counts = {};
+  for (const m of MATERIALS) for (const t of flatTags(m)) counts[t] = (counts[t] || 0) + 1;
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 24);
+  const html = top.map(([t, c]) =>
+    `<span class="tcloud-tag ${f.tags.has(t) ? 'active' : ''}" data-tag="${esc(t)}" onclick="toggleTag('${esc(t).replace(/'/g, "\\'")}')">${esc(t)}<b>${c}</b></span>`
+  ).join('');
+  $('tagCloud').innerHTML = html || '<span class="subtle">入库素材后自动生成标签图谱</span>';
+  let clear = document.getElementById('tagClear');
+  if (f.tags.size && !clear) {
+    const b = document.createElement('button');
+    b.id = 'tagClear'; b.className = 'tcloud-clear'; b.textContent = '✕ 清除标签筛选'; b.onclick = () => { f.tags.clear(); renderTagCloud(); renderMain(); };
+    $('tagCloudBar').appendChild(b);
+  } else if (clear && !f.tags.size) clear.remove();
+}
+function toggleTag(t) {
+  if (f.tags.has(t)) f.tags.delete(t); else f.tags.add(t);
+  renderTagCloud(); renderMain();
+}
+function renderMain() { if (view === 'grid') renderGrid(); else renderKanban(); }
+
+// ---------------- 动态看板 ----------------
+function setView(v) {
+  view = v;
+  document.querySelectorAll('.vtab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+  $('boardBy').classList.toggle('hidden', v !== 'kanban');
+  $('todo-note')?.remove();
+  renderMain();
+}
+function setBoardBy(v) { boardBy = v; renderKanban(); }
+function kanbanCols() {
+  if (boardBy === 'grade') return [{ key: 'S' }, { key: 'A' }, { key: 'B' }, { key: 'C' }, { key: 'D' }].map(c => ({ ...c, label: c.key + ' 级', color: GCOLOR[c.key] }));
+  if (boardBy === 'channel') return [
+    { key: 'auto', label: '自动推荐', color: '#8b5cf6' },
+    { key: 'google', label: 'Google', color: '#0ea5e9' },
+    { key: 'meta', label: 'Meta', color: '#4f46e5' },
+    { key: 'tiktok', label: 'TikTok', color: '#10b981' }
+  ];
+  return MODEL.enums.hookType.map(ht => ({ key: ht, label: ht, color: '#6b7594' }));
+}
+function kanbanKeyOf(m) {
+  if (boardBy === 'grade') return effGrade(m);
+  if (boardBy === 'channel') return effChannel(m) ? effChannel(m) : 'auto';
+  return m.analysis.hook?.hookType || '无明确钩子';
+}
+function kCardHTML(m) {
+  const src = thumbOf(m, true);
+  const img = src ? `<img class="kthumb" src="${src}" alt="">` : `<div class="kthumb" style="display:flex;align-items:center;justify-content:center">🎬</div>`;
+  return `<div class="kcard" draggable="true" data-id="${m.id}"
+      ondragstart="onKDrag(event,'${m.id}')" ondragend="onKDragEnd(event)" onclick="openDrawer('${m.id}')">
+      ${img}
+      <div class="kmeta"><div class="kt">${esc(m.name)}</div>
+        <div class="ks">${fmt(m.analysis.composite)} 分 · ${m.analysis.hook?.hookType || ''}</div>
+        <div class="ks">${(m.analysis.tags?.advice || [])[0] ? esc((m.analysis.tags.advice)[0]) : ''}</div>
+      </div>
+      <span class="kbadge badge-${effGrade(m)}">${effGrade(m)}</span>
+    </div>`;
+}
+function renderKanban() {
+  const list = filtered();
+  $('grid').classList.add('hidden');
+  $('kanban').classList.remove('hidden');
+  $('empty').classList.toggle('hidden', list.length > 0);
+  const cols = kanbanCols();
+  $('kanban').innerHTML = cols.map(c => {
+    const items = list.filter(m => kanbanKeyOf(m) === c.key);
+    return `<div class="kcol" data-col="${esc(c.key)}" ondragover="onKDragOver(event)" ondragleave="this.classList.remove('dragover')" ondrop="onKDrop(event)">
+      <div class="kcol-head"><span class="dot" style="background:${c.color}"></span>${c.label}<small>${items.length}</small></div>
+      ${items.map(kCardHTML).join('') || '<div class="subtle" style="padding:8px 6px">拖拽卡片到此处分类</div>'}
+    </div>`;
+  }).join('');
+}
+function onKDrag(ev, id) { ev.dataTransfer.setData('text/plain', id); ev.currentTarget.classList.add('dragging'); }
+function onKDragEnd(ev) { ev.currentTarget.classList.remove('dragging'); }
+function onKDragOver(ev) { ev.preventDefault(); ev.currentTarget.classList.add('dragover'); ev.dataTransfer.dropEffect = 'move'; }
+async function onKDrop(ev) {
+  ev.preventDefault();
+  const col = ev.currentTarget;
+  col.classList.remove('dragover');
+  const id = ev.dataTransfer.getData('text/plain');
+  const colKey = col.dataset.col;
+  const m = MATERIALS.find(x => x.id === id);
+  if (!m) return;
+  let body = {};
+  if (boardBy === 'grade') {
+    if (colKey === effGrade(m)) return;
+    body.custom = { manualGrade: colKey };
+  } else if (boardBy === 'channel') {
+    const target = colKey === 'auto' ? null : colKey;
+    if (target === (m.custom?.manualChannel ?? null)) return;
+    body.custom = { manualChannel: target };
+  } else {
+    if (colKey === (m.analysis.hook?.hookType || '无明确钩子')) return;
+    body.analysis = { hook: { hookType: colKey } };
+  }
+  const upd = await fetch(`/api/materials/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+  MATERIALS = MATERIALS.map(x => x.id === id ? upd : x);
+  render();
+  toast('已重新分类');
+}
+
+// ---------------- 详情工作室 ----------------
+function openDrawer(id) {
+  selectedId = id;
   renderDrawer();
   $('drawerBackdrop').classList.remove('hidden');
   $('drawer').classList.remove('hidden');
 }
-function closeDrawer(){ $('drawerBackdrop').classList.add('hidden'); $('drawer').classList.add('hidden'); selected=null; }
+function closeDrawer() { $('drawerBackdrop').classList.add('hidden'); $('drawer').classList.add('hidden'); selectedId = null; }
+const cur = () => MATERIALS.find(m => m.id === selectedId);
 
-function renderDrawer(){
-  const m=selected; if(!m) return;
-  const src=thumbSrc(m);
-  const dropdown=[...Array.from(m.flags||[])].map(f=>{
-    const r=MODEL.rules.find(x=>x.key===f.key);
-    return {key:f.key,label:r?r.label:f.key,sev:r?r.severity:'warning',checked:f.checked};
-  });
-  // 计算即时预览
-  const prevScore=fmtScore(clientComposite(m.dims,MODEL.weights));
-  const prevGrade=clientGrade(prevScore);
-  const flags=dropdown.filter(f=>f.checked).map(f=>({key:f.key}));
-  const prevVid=clientVerdict(m.dims,prevScore,flags,m.mediaType);
-  const preview = src
-    ? (m.mediaType==='video'
-      ? `<video src="${src}" controls style="max-width:100%;max-height:420px"></video>`
-      : `<img src="${src}" style="max-width:100%;max-height:420px">`)
-    : `<div style="font-size:64px;color:#c7d2fe">${m.mediaType==='video'?'🎬':'🗂️'}</div>`;
+function renderDrawer() {
+  const m = cur();
+  if (!m) return;
+  const a = m.analysis, b = m.basic;
+  const risks = a.policy?.risks || [];
+  const riskState = m.custom?.riskState || {};
+  const src = thumbOf(m);
 
-  const dimRows=Object.keys(MODEL.weights).map(k=>`
-    <div class="dim">
-      <span class="lbl">${MODEL.dimensions[k]}<small>权重 ${MODEL.weights[k]}%</small></span>
-      <input type="range" min="0" max="100" step="1" value="${m.dims[k]}" data-dim="${k}" oninput="onDim(this)">
-      <span class="val" id="v-${k}">${m.dims[k]}</span>
-    </div>`).join('');
+  const preview = !src
+    ? `<div style="font-size:64px;color:#c7d2fe;padding:40px">${b.mediaType === 'video' ? '🎬' : '🗂️'}</div>`
+    : b.mediaType === 'video'
+      ? `<video src="${m.ref}" poster="${b.poster || ''}" controls id="dvideo" style="width:100%"></video>`
+      : `<img src="${src}" style="max-width:100%">`;
 
-  const wProps=Object.entries(dropdown).map(([,f])=>`
-    <label class="check-row">
-      <input type="checkbox" data-flag="${f.key}" ${f.checked?'checked':''} onchange="onFlag(this)">
-      <span class="cr-label">${f.label}</span>
-      <span class="cr-sev sev-${f.sev}">${f.sev==='critical'?'一票否决':'风险'} </span>
-    </label>`).join('');
+  const statusChips = ['google', 'meta', 'tiktok'].map(k => {
+    const p = a.platforms?.[k];
+    if (!p) return '';
+    return `<span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}"><i>${CH_ICON[k]}</i>${CH_NAME[k]} ${fmt(p.fit)}</span>`;
+  }).join('');
 
-  const vb=(title,obj,cls)=>`<div class="verdict-box vb-${cls}">
-      <h4><span class="vchip ${cls==='GO'?'g':cls==='COND'?'y':'r'}"><i>${title[0]}</i>${title}</span> → <b>${obj.verdict==='GO'?'可投放':obj.verdict==='COND'?'需优化后投放':'不可投放'}</b></h4>
-      <ul>${obj.reasons.map(r=>`<li>${r}</li>`).join('')}</ul>
-    </div>`;
-  const hasCritical=dropdown.some(f=>f.checked&&f.sev==='critical');
-
-  $('drawer').innerHTML=`
-    <div class="drawer-head"><h2>素材详情与评分</h2>
-      <button class="shape-btn" onclick="closeDrawer()">✕</button>
+  $('drawer').innerHTML = `
+  <div class="drawer-head"><h2>素材深度剖析工作台</h2>
+    ${MODEL.ai.available ? `<button class="btn sm line" id="btnAI">✨ AI 多模态评测</button>` : `<span class="subtle" title="配置 GEMINI_API_KEY 后可启用">🤖 AI 评测未启用</span>`}
+    <button class="shape-btn" onclick="closeDrawer()">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="preview">${preview}</div>
+    <div class="d-summary">
+      <div class="d-score ${effGrade(m)}" style="background:${GCOLOR[effGrade(m)]}">
+        <b>${fmt(a.composite)}</b><span>JEV 综合分</span>
+      </div>
+      <div style="flex:1">
+        <div style="font-weight:700;font-size:16px">${esc(m.name)}</div>
+        <div style="color:var(--muted);font-size:12.5px;margin-top:4px">
+          ${b.mediaType === 'video' ? '🎬 视频' : '🖼️ 单图'} · ${b.aspect || '?'} · ${b.durationSec ? b.durationSec + 's' : ''} · ${b.resolution || '未知分辨率'} · ${b.hasAudio ? '有音轨' : '无音轨'}
+          ${m.custom?.manualGrade ? ` · 人工定级 ${m.custom.manualGrade}` : ''}
+        </div>
+        <div class="verdicts" style="margin-top:8px">${statusChips}</div>
+      </div>
     </div>
-    <div class="drawer-body">
-      <div class="preview">${preview}</div>
-      <div class="d-summary">
-        <div class="d-score ${prevGrade.grade}" style="background:${scoreColor(prevGrade.grade)}"><b>${prevScore}</b><span>JEV 综合分</span></div>
-        <div style="flex:1">
-          <div style="font-weight:700;font-size:16px">${m.name}</div>
-          <div style="color:var(--muted);font-size:12.5px;margin-top:4px">
-            类型:${m.mediaType==='video'?'视频':m.mediaType==='carousel'?'轮播':'图文'} · 分级:<b>${prevGrade.grade} 级(${prevGrade.label})</b> · ${bytes(m.sizeBytes)}
-          </div>
-          <div class="verdicts" style="margin-top:10px">
-            <span class="vchip ${vCls(prevVid.google.verdict)}"><i>G</i> Google ${vName(prevVid.google.verdict)}</span>
-            <span class="vchip ${vCls(prevVid.fb.verdict)}"><i>F</i> Facebook ${vName(prevVid.fb.verdict)}</span>
-          </div>
-        </div>
-        <button class="btn danger">删除</button>
-      </div>
 
+    <div class="section">
+      <h3>⏱ 时间轴 & JEV 状态曲线 <span class="warn">点击节点跳转画面</span></h3>
+      ${timelineHTML(m)}
+      ${curveHTML(m)}
+      <div class="curve-legend"><span><i style="background:#f43f5e"></i>J 吸睛度</span><span><i style="background:#8b5cf6"></i>E 沉浸信任</span><span><i style="background:#10b981"></i>V 转化闭环</span></div>
+    </div>
+
+    <div class="g2">
       <div class="section">
-        <h3>维度评分 <span class="warn">拖动滑块自动重算综合分</span></h3>
-        ${dimRows}
+        <h3>📡 渠道适配雷达</h3>
+        <div class="radar-box">${radarHTML(m)}</div>
       </div>
-
       <div class="section">
-        <h3>合规 & 投放判定</h3>
-        ${vb('Google', prevVid.google, prevVid.google.verdict)}
-        ${vb('Facebook', prevVid.fb, prevVid.fb.verdict)}
-        ${hasCritical?'<div style="color:#b91c1c;font-size:12px;margin-top:8px">⚠ 存在一票否决违禁项，两平台均判定不可投放。</div>':''}
+        <h3>🎯 JEV 黄金三维评分 <span class="warn">1-10 分</span></h3>
+        <div class="dim"><span class="lbl">${MODEL.labels.j}</span><input type="range" min="1" max="10" step="0.1" value="${a.hook.score}" id="s-j" oninput="onJevIn(this)"><span class="val" id="v-j">${a.hook.score}</span></div>
+        <div class="dim"><span class="lbl">${MODEL.labels.e}</span><input type="range" min="1" max="10" step="0.1" value="${a.engagement.score}" id="s-e" oninput="onJevIn(this)"><span class="val" id="v-e">${a.engagement.score}</span></div>
+        <div class="dim"><span class="lbl">${MODEL.labels.v}</span><input type="range" min="1" max="10" step="0.1" value="${a.value.score}" id="s-v" oninput="onJevIn(this)"><span class="val" id="v-v">${a.value.score}</span></div>
+        <div class="subtle" style="margin-top:6px">权重 J=${MODEL.weights.j} · E=${MODEL.weights.e} · V=${MODEL.weights.v}（可在「评分模型」调整）</div>
       </div>
+    </div>
 
-      <div class="section">
-        <h3>合规违禁项检查</h3>
-        ${wProps}
+    <div class="section">
+      <h3>🔍 J - Hook 拆解</h3>
+      <div class="form-grid">
+        <div class="fld"><label>Hook 策略类型</label><select id="f-hookType">${selOpts(MODEL.enums.hookType, a.hook?.hookType)}</select></div>
+        <div class="fld"><label>前3秒视觉冲击力 (1-10)</label><input type="number" id="f-visualImpact" min="1" max="10" step="0.1" value="${a.hook?.visualImpact ?? 6}"></div>
+        <div class="fld"><label>产品亮相秒数</label><input type="number" id="f-reveal" step="0.1" value="${a.hook?.productRevealSec ?? 1.5}"></div>
+        <div class="fld"><label style="margin-top:22px"><input type="checkbox" id="f-textOverlay" ${a.hook?.textOverlay ? 'checked' : ''} style="width:auto;accent-color:var(--accent)"> 有字幕视觉重音</label></div>
       </div>
+    </div>
 
-      <div class="section">
-        <h3>素材信息</h3>
-        <div class="form-grid">
-          <div><label>名称</label><input id="f-name" value="${m.name}"></div>
-          <div><label>分类 / 品类</label><input id="f-category" value="${m.category||''}" placeholder="如：美妆、家居、3C…"></div>
-          <div><label>素材类型</label>
-            <select id="f-type">${['image','video','carousel'].map(t=>`<option value="${t}" ${m.mediaType===t?'selected':''}>${t==='image'?'图文':t==='video'?'视频':'轮播'}</option>`).join('')}</select>
-          </div>
-          <div><label>自定义标签（逗号分隔）</label><input id="f-tags" value="${(m.customTags||[]).join(', ')}"></div>
-          <div class="full"><label>备注 / 投放说明</label><textarea id="f-notes">${m.notes||''}</textarea></div>
-        </div>
+    <div class="section">
+      <h3>🤝 E - Engagement 拆解</h3>
+      <div class="form-grid">
+        <div class="fld"><label>核心痛点词</label><input id="f-painPoint" value="${esc(a.engagement?.painPoint || '')}" placeholder="如：毛孔粗大"></div>
+        <div class="fld"><label>场景</label><select id="f-scene">${selOpts(MODEL.enums.scene, a.engagement?.scene)}</select></div>
+        <div class="fld"><label>出镜类型</label><select id="f-actor">${selOpts(MODEL.enums.actor, a.engagement?.actor)}</select></div>
+        <div class="fld"><label>语言/口音</label><select id="f-lang">${selOpts(MODEL.enums.language, a.engagement?.language)}</select></div>
+        <div class="fld"><label>场景真实感 (1-10)</label><input type="number" id="f-realism" min="1" max="10" step="0.1" value="${a.engagement?.sceneRealism ?? 6}"></div>
+        <div class="fld"><label>方案演示清晰度 (1-10)</label><input type="number" id="f-demo" min="1" max="10" step="0.1" value="${a.engagement?.demoClarity ?? 6}"></div>
+        <div class="fld"><label><input type="checkbox" id="f-ba" style="width:auto;accent-color:var(--accent)" ${a.engagement?.beforeAfter ? 'checked' : ''}> Before/After 对比</label></div>
+        <div class="fld"><label>信任元素</label>${MODEL.enums.trust.map(t => `<label class="check-row" style="padding:1px 0"><input type="checkbox" class="chk-trust" value="${t}" ${(a.engagement?.trust || []).includes(t) ? 'checked' : ''} style="width:auto"><span class="cr-label">${t}</span></label>`).join('')}</div>
       </div>
+    </div>
 
-      <div class="section">
-        <h3>实况表现指标（可选填报）</h3>
-        <div class="form-grid">
-          <div><label>CTR %</label><input id="f-ctr" type="number" step="0.01" value="${m.meta.ctr||''}"></div>
-          <div><label>CVR %</label><input id="f-cvr" type="number" step="0.01" value="${m.meta.cvr||''}"></div>
-          <div><label>ROAS</label><input id="f-roas" type="number" step="0.01" value="${m.meta.roas||''}"></div>
-          <div><label>展示(Impr)</label><input id="f-impr" type="number" value="${m.meta.impr||''}"></div>
-        </div>
-        <button class="btn ghost sm" style="margin-top:10px" onclick="applyMetaTuning()">依据实况数据微调评分</button>
+    <div class="section">
+      <h3>💰 V - Value & CTA 拆解</h3>
+      <div class="form-grid">
+        <div class="fld"><label>核心卖点 USP</label><input id="f-usp" value="${esc(a.value?.usp || '')}" placeholder="如：3天见效 / 免运费"></div>
+        <div class="fld"><label>促销类型</label><select id="f-offer">${selOpts(MODEL.enums.offer, a.value?.offer)}</select></div>
+        <div class="fld"><label>CTA 强度 (1-10)</label><input type="number" id="f-ctaScore" min="1" max="10" step="0.1" value="${a.value?.ctaScore ?? 6}"></div>
+        <div class="fld"><label>CTA 文案</label><input id="f-ctaText" value="${esc(a.value?.ctaText || '')}" placeholder="Shop Now"></div>
+        <div class="fld"><label><input type="checkbox" id="f-price" style="width:auto;accent-color:var(--accent)" ${a.value?.priceShown ? 'checked' : ''}> 有价格/Discount 露出</label></div>
       </div>
+    </div>
 
+    <div class="section">
+      <h3>🛡 合规审查 & 渠道适配判定 <span class="warn">勾选违禁项实时更新判定</span></h3>
+      ${MODEL.policyRules.map(r => `<label class="check-row"><input type="checkbox" class="chk-risk" data-key="${r.key}" data-level="${r.severity}" ${riskState[r.key] ? 'checked' : ''} style="width:auto"><span class="cr-label">${r.label}</span><span class="cr-sev sev-${r.severity}">${r.severity === 'critical' ? '一票否决' : '风险'}</span></label>`).join('')}
+      <div class="line20"></div>
+      <div id="verdictZone">${verdictZoneHTML(m)}</div>
+    </div>
+
+    <div class="section">
+      <h3>📝 OCR & 语音字幕 <span class="warn">${MODEL.caps?.tesseract || MODEL.caps?.whisper ? '本地引擎可用' : '本地未装 tesseract/whisper，可手动粘贴'}</span></h3>
+      <div class="fld"><textarea id="f-subtitles" rows="5" placeholder="每行一段：起始秒,结束秒|文本（如：1.5,3.2|Pores gone in 3 days）">${(m.subtitles || []).map(s => `${s.start},${s.end}|${s.text}`).join('\n')}</textarea></div>
+    </div>
+
+    <div class="section">
+      <h3>🏷 素材信息 & 实况指标</h3>
+      <div class="form-grid">
+        <div class="fld"><label>分类/品类</label><input id="f-category" value="${esc(m.custom?.category || '')}" placeholder="如：美妆、家居、3C"></div>
+        <div class="fld"><label>自定义标签（逗号分隔）</label><input id="f-customTags" value="${esc((m.custom?.customTags || []).join(', '))}"></div>
+        <div class="fld"><label>CTR %</label><input type="number" id="f-ctr" step="0.01" value="${m.perf?.ctr ?? ''}"></div>
+        <div class="fld"><label>CVR %</label><input type="number" id="f-cvr" step="0.01" value="${m.perf?.cvr ?? ''}"></div>
+        <div class="fld"><label>ROAS</label><input type="number" id="f-roas" step="0.01" value="${m.perf?.roas ?? ''}"></div>
+        <div class="fld"><label>展示 Impr</label><input type="number" id="f-impr" value="${m.perf?.impr ?? ''}"></div>
+        <div class="fld full"><label>备注</label><textarea id="f-notes">${esc(m.custom?.notes || '')}</textarea></div>
+      </div>
       <div class="d-actions">
-        <button class="btn primary" onclick="saveDetail()">保存修改</button>
-        <button class="btn ghost" onclick="closeDrawer()">关闭</button>
+        <button class="btn sm soft" onclick="applyPerf()">依据实况指标微调</button>
+        ${m.custom?.manualGrade || m.custom?.manualChannel ? '<button class="btn sm line" onclick="clearOverride()">恢复自动分类</button>' : ''}
       </div>
-    </div>`;
+    </div>
 
-  // 绑定删除
-  $('drawer').querySelector('.btn.danger').onclick=()=>delMaterial(m.id);
-  // 泛化监听
-  $('f-name').onchange=()=>{m.name=$('f-name').value;};
-  $('f-category').onchange=()=>{m.category=$('f-category').value;};
-  $('f-type').onchange=()=>{m.mediaType=$('f-type').value; renderDrawer();};
-}
-function scoreColor(g){return {S:'linear-gradient(135deg,#059669,#10b981)',A:'linear-gradient(135deg,#16a34a,#4ade80)',B:'linear-gradient(135deg,#0284c7,#38bdf8)',C:'linear-gradient(135deg,#d97706,#fbbf24)',D:'linear-gradient(135deg,#dc2626,#f87171)'}[g]||'#6b7594';}
-function vCls(v){return v==='GO'?'g':v==='COND'?'y':'r';}
-function vName(v){return v==='GO'?'可投放':v==='COND'?'需优化':'不可投';}
-function bytes(b){if(!b)return'';const s=b/1024;return s>1024? (s/1024).toFixed(1)+' MB' : Math.round(s)+' KB';}
+    <div class="d-actions">
+      <button class="btn primary" onclick="saveDetail()">💾 保存修改</button>
+      <button class="btn soft" onclick="exportOne('${m.id}')">📄 导出报告 CSV</button>
+      <button class="btn danger" onclick="delMaterial('${m.id}')">🗑 删除</button>
+    </div>
+  </div>`;
 
-// ---------- 交互 ----------
-function throttledSave(m){
-  clearTimeout(m.__save);
-  m.__save=setTimeout(()=>saveDetail(true),400);
+  const aiBtn = $('btnAI');
+  if (aiBtn) aiBtn.onclick = () => runAI(m.id);
+  const dv = $('dvideo');
+  if (dv && b.durationSec) dv.onloadedmetadata = () => { /* 时间轴跳转 */ };
 }
-function onDim(el){
-  const k=el.dataset.dim;
-  selected.dims[k]=+el.value;
-  $(`v-${k}`).textContent=el.value;
-  const s=fmtScore(clientComposite(selected.dims,MODEL.weights));
-  // 刷新评分徽章需要重建，但抽屉内我们只更新保存时; 这里更新 summary 数字
-  throttledSave(selected);
+
+function selOpts(list, curVal) {
+  return list.map(x => `<option ${x === curVal ? 'selected' : ''}>${esc(x)}</option>`).join('');
 }
-function onFlag(el){
-  const k=el.dataset.flag;
-  const f=selected.flags.find(x=>x.key===k); if(f) f.checked=el.checked;
-  // 重新渲染合规判定区（简化：整体重建抽屉会丢滑块输入焦点，这里只重建判定 section 较复杂，直接全量重建但保留值）
-  renderDrawer();
-  throttledSave(selected);
+function timelineHTML(m) {
+  const tl = m.timeline || { nodes: [], curve: [] };
+  const dur = Math.max(m.basic.durationSec || 2, 1);
+  const nodes = (tl.nodes || []).map(n => {
+    const pct = Math.min(100, (n.sec / dur) * 100);
+    return `<div class="tl-node" style="left:${pct}%" title="${n.sec}s" onclick="seekVideo(${n.sec})"><span>${esc(n.label)}</span></div>`;
+  }).join('');
+  return `<div class="timeline-wrap"><div class="timeline-track" style="width:100%"><div class="fill" style="width:100%"></div>${nodes}</div></div>`;
 }
-async function saveDetail(silent){
-  const m=selected; if(!m) return;
-  const customTags=(($('f-tags')?.value||'').split(',').map(s=>s.trim()).filter(Boolean));
-  const meta={ctr:+(($('f-ctr')?.value)||0),cvr:+(($('f-cvr')?.value)||0),roas:+(($('f-roas')?.value)||0),impr:+(($('f-impr')?.value)||0)};
-  const checkedFlags=selected.flags.filter(f=>f.checked).map(f=>f.key);
-  const body={
-    dims:m.dims,
-    customTags,
-    category:m.category,
-    notes:($('f-notes')?.value)||m.notes,
-    meta,
-    checkedFlags
+function curveHTML(m) {
+  const tl = m.timeline || { nodes: [], curve: [] };
+  const dur = Math.max(m.basic.durationSec || 2, 1);
+  const W = 360, H = 90, P = 8;
+  const pts = tl.curve || [];
+  if (!pts.length) return '<div class="subtle">暂无曲线数据</div>';
+  const X = p => P + (p.t / dur) * (W - 2 * P);
+  const Y = v => H - P - (v / 10) * (H - 2 * P);
+  const line = (key, color) => `<polyline fill="none" stroke="${color}" stroke-width="2" points="${pts.map(p => `${X(p)},${Y(p[key])}`).join(' ')}"/>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
+    ${[2.5, 5, 7.5].map(g => `<line x1="${P}" y1="${Y(g)}" x2="${W - P}" y2="${Y(g)}" stroke="#e6e9f2" stroke-width="1"/>`).join('')}
+    ${line('j', '#f43f5e')}${line('e', '#8b5cf6')}${line('v', '#10b981')}
+  </svg>`;
+}
+function radarHTML(m) {
+  const a = m.analysis;
+  const vals = {
+    'J': (a.hook?.score || 0) / 10,
+    'E': (a.engagement?.score || 0) / 10,
+    'V': (a.value?.score || 0) / 10,
+    'Google': (a.platforms?.google?.fit || 0) / 100,
+    'Meta': (a.platforms?.meta?.fit || 0) / 100,
+    'TikTok': (a.platforms?.tiktok?.fit || 0) / 100
   };
-  const res=await fetch(api.materials+'/'+m.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const updated=await res.json();
-  const i=MATERIALS.findIndex(x=>x.id===m.id);
-  if(i>=0) MATERIALS[i]=updated;
-  selected=updated;
-  render();
-  if(!silent){ renderDrawer(); toast('已保存'); }
+  const keys = Object.keys(vals), N = keys.length;
+  const C = 120, R = 95;
+  const pt = (i, r) => {
+    const ang = (Math.PI * 2 * i) / N - Math.PI / 2;
+    return [C + r * Math.cos(ang), C + r * Math.sin(ang)];
+  };
+  const ring = (f) => keys.map((_, i) => pt(i, R * f).join(',')).join(' ');
+  const poly = keys.map((_, i) => pt(i, R * vals[keys[i]]).join(',')).join(' ');
+  const labels = keys.map((k, i) => {
+    const [x, y] = pt(i, R + 16);
+    return `<text x="${x}" y="${y}" font-size="10" fill="#6b7594" text-anchor="middle">${k}</text>`;
+  }).join('');
+  return `<svg width="240" height="240" viewBox="0 0 240 240">
+    <polygon points="${ring(1)}" fill="none" stroke="#e6e9f2"/>
+    <polygon points="${ring(0.66)}" fill="none" stroke="#e6e9f2"/>
+    <polygon points="${ring(0.33)}" fill="none" stroke="#e6e9f2"/>
+    ${keys.map((_, i) => { const [x, y] = pt(i, R); return `<line x1="${C}" y1="${C}" x2="${x}" y2="${y}" stroke="#e6e9f2"/>`; }).join('')}
+    <polygon points="${poly}" fill="rgba(79,70,229,.22)" stroke="#4f46e5" stroke-width="2"/>
+    ${keys.map((_, i) => { const [x, y] = pt(i, R * vals[keys[i]]); return `<circle cx="${x}" cy="${y}" r="3.5" fill="#4f46e5"/>`; }).join('')}
+    ${labels}
+  </svg>`;
 }
-async function delMaterial(id){
-  if(!confirm('确定删除该素材？（本地媒体文件也会被移除）')) return;
-  await fetch(api.materials+'/'+id,{method:'DELETE'});
-  MATERIALS=MATERIALS.filter(x=>x.id!==id);
-  closeDrawer(); render(); toast('已删除');
+function verdictZoneHTML(m) {
+  const a = m.analysis;
+  const vb = (title, p) => `<div class="verdict-box vb-${p.verdict}">
+    <h4><span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}"><i>${title[0]}</i>${title}</span> → <b>${p.verdict === 'GO' ? '可投放' : p.verdict === 'COND' ? '需优化后投放' : '不可投放'}</b> <span class="vchip fit">适配 ${fmt(p.fit)}</span></h4>
+    <ul>${(p.reasons || ['—']).map(r => `<li>${esc(r)}</li>`).join('')}</ul></div>`;
+  return vb('Google', a.platforms?.google || {}) + vb('Meta', a.platforms?.meta || {}) + vb('TikTok', a.platforms?.tiktok || {});
 }
-function applyMetaTuning(){
-  const ctr=+($('f-ctr')?.value||0), cvr=+($('f-cvr')?.value||0), roas=+($('f-roas')?.value||0);
-  if(!ctr&&!cvr&&!roas){toast('请先填入至少一项实况指标');return;}
-  // 漏斗微调：CTR 影响钩子/信息，CVR 影响产品/CTA，ROAS 综合加成
-  let adj=0;
-  if(ctr){ if(ctr>=2) selected.dims.hook=Math.min(100,selected.dims.hook+8),adj++; else if(ctr<0.8) selected.dims.hook=Math.max(0,selected.dims.hook-8),adj++; }
-  if(cvr){ if(cvr>=3) selected.dims.cta=Math.min(100,selected.dims.cta+8),adj++; else if(cvr<1) selected.dims.cta=Math.max(0,selected.dims.cta-6),adj++; }
-  if(roas){ if(roas>=2) {selected.composite=Math.min(100,selected.composite+3);} else if(roas<1 && roas>0){selected.composite=Math.max(0,selected.composite-3);} }
-  toast('已按实况指标微调，请查看滑块并保存');
-  renderDrawer();
+function seekVideo(sec) {
+  const v = $('dvideo');
+  if (v) { v.currentTime = sec; v.play().catch(() => {}); }
 }
 
-// ---------- 导入弹窗 ----------
-function openAdd(){
+// ---------------- 详情交互 ----------------
+function onJevIn(el) {
+  $(el.id.replace('s-', 'v-')).textContent = el.value;
+  const m = cur();
+  m.analysis.hook.score = +$('s-j').value;
+  m.analysis.engagement.score = +$('s-e').value;
+  m.analysis.value.score = +$('s-v').value;
+  // 实时更新综合分徽章与判定
+  const comp = clComputeComposite(m.analysis);
+  document.querySelector('.d-score b').textContent = comp;
+  const g = clGrade(comp);
+  const dsc = document.querySelector('.d-score');
+  dsc.className = 'd-score ' + g.grade;
+  dsc.style.background = GCOLOR[g.grade];
+  // 判定区（简化：不清空风险勾选，直接用当前勾选状态计算）
+  const risks = currentRisks(m);
+  const plats = clPlatforms(m, risks);
+  m._tmpPlats = plats;
+  $('verdictZone').innerHTML = verdictZoneHTML({ ...m, analysis: { ...m.analysis, platforms: plats } });
+}
+function currentRisks(m) {
+  const checked = [...document.querySelectorAll('.chk-risk:checked')].map(x => x.dataset.key);
+  const mRisks = m.analysis.policy?.risks || [];
+  const manual = checked.map(key => {
+    const r = MODEL.policyRules.find(x => x.key === key);
+    const exist = mRisks.find(x => x.key === key);
+    return exist || { key, level: r.severity, label: r.label, automatic: false };
+  });
+  // 保留自动命中的（无人为改动时）
+  return manual.length ? manual : mRisks;
+}
+async function saveDetail() {
+  const m = cur();
+  if (!m) return;
+  const trust = [...document.querySelectorAll('.chk-trust:checked')].map(x => x.value);
+  const checkedRiskKeys = [...document.querySelectorAll('.chk-risk:checked')].map(x => x.dataset.key);
+  const riskState = {};
+  for (const r of MODEL.policyRules) riskState[r.key] = checkedRiskKeys.includes(r.key);
+
+  let subtitles = [];
+  try {
+    subtitles = $('f-subtitles').value.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+      const m2 = l.match(/^\s*([\d.]+)\s*,\s*([\d.]+)\s*\|\s*(.+)$/);
+      if (m2) return { start: +m2[1], end: +m2[2], text: m2[3].trim() };
+      return { start: 0, end: 0, text: l };
+    });
+  } catch {}
+
+  const body = {
+    analysis: {
+      hook: {
+        score: +$('s-j').value, hookType: $('f-hookType').value,
+        visualImpact: +$('f-visualImpact').value || 6,
+        productRevealSec: +$('f-reveal').value || 1.5,
+        textOverlay: $('f-textOverlay').checked
+      },
+      engagement: {
+        score: +$('s-e').value, painPoint: $('f-painPoint').value.trim(),
+        scene: $('f-scene').value, actor: $('f-actor').value, language: $('f-lang').value,
+        sceneRealism: +$('f-realism').value || 6, demoClarity: +$('f-demo').value || 6,
+        beforeAfter: $('f-ba').checked, trust
+      },
+      value: {
+        score: +$('s-v').value, usp: $('f-usp').value.trim(), offer: $('f-offer').value,
+        priceShown: $('f-price').checked, ctaScore: +$('f-ctaScore').value || 6,
+        ctaText: $('f-ctaText').value.trim()
+      }
+    },
+    riskState,
+    custom: {
+      category: $('f-category').value.trim(),
+      customTags: $('f-customTags').value.split(/[,，]/).map(s => s.trim()).filter(Boolean),
+      notes: $('f-notes').value
+    },
+    subtitles,
+    perf: { ctr: +$('f-ctr').value || null, cvr: +$('f-cvr').value || null, roas: +$('f-roas').value || null, impr: +$('f-impr').value || null }
+  };
+  const upd = await fetch('/api/materials/' + m.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+  MATERIALS = MATERIALS.map(x => x.id === m.id ? upd : x);
+  render();
+  renderDrawer();
+  toast('已保存');
+}
+function applyPerf() {
+  const ctr = +$('f-ctr').value || 0, cvr = +$('f-cvr').value || 0;
+  if (ctr >= 2) { $('s-j').value = Math.min(10, +$('s-j').value + 0.8); $('v-j').textContent = $('s-j').value; }
+  else if (ctr > 0 && ctr < 0.8) { $('s-j').value = Math.max(1, +$('s-j').value - 0.8); $('v-j').textContent = $('s-j').value; }
+  if (cvr >= 3) { $('s-v').value = Math.min(10, +$('s-v').value + 0.8); $('v-v').textContent = $('s-v').value; }
+  else if (cvr > 0 && cvr < 1) { $('s-v').value = Math.max(1, +$('s-v').value - 0.6); $('v-v').textContent = $('s-v').value; }
+  onJevIn({ id: 's-j', value: $('s-j').value });
+  toast('已按实况指标微调 J/V 维度，请保存');
+}
+async function clearOverride() {
+  const m = cur();
+  const upd = await fetch('/api/materials/' + m.id, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ custom: { manualGrade: null, manualChannel: null } })
+  }).then(r => r.json());
+  MATERIALS = MATERIALS.map(x => x.id === m.id ? upd : x);
+  render(); renderDrawer();
+  toast('已恢复自动分类');
+}
+async function runAI(id) {
+  const r = await fetch('/api/analyze/' + id, { method: 'POST' }).then(x => x.json());
+  if (!r.ai) { toast('⚠ ' + (r.message || 'AI 不可用')); return; }
+  MATERIALS = MATERIALS.map(x => x.id === id ? r.material : x);
+  render(); renderDrawer();
+  toast('AI 多模态评测完成');
+}
+async function delMaterial(id) {
+  if (!confirm('确定删除该素材？（本地媒体文件与抽帧缩略图会一并清理）')) return;
+  await fetch('/api/materials/' + id, { method: 'DELETE' });
+  MATERIALS = MATERIALS.filter(x => x.id !== id);
+  closeDrawer(); render();
+  toast('已删除');
+}
+
+// ---------------- CSV 导出 ----------------
+function csvHead() {
+  return ['素材ID', '名称', '类型', '画幅', '时长s', '分辨率', '综合分', '评级', '人工评级',
+    'J分', 'E分', 'V分', 'Hook类型', '出镜', '语言', '场景', '痛点', '促销', 'CTA分', '合规分',
+    'Google适配', 'Google判定', 'Meta适配', 'Meta判定', 'TikTok适配', 'TikTok判定',
+    '风险项', '标签', '推荐策略', '备注', 'CTR', 'CVR', 'ROAS', '展示'];
+}
+function csvRow(m) {
+  const a = m.analysis;
+  const q = x => '"' + String(x ?? '').replace(/"/g, '""') + '"';
+  return [
+    m.id, m.name, m.basic.mediaType, m.basic.aspect || '', m.basic.durationSec || '', m.basic.resolution || '',
+    a.composite, a.grade, m.custom?.manualGrade || '',
+    a.hook?.score, a.engagement?.score, a.value?.score, a.hook?.hookType || '',
+    a.engagement?.actor || '', a.engagement?.language || '', a.engagement?.scene || '',
+    a.engagement?.painPoint || '', a.value?.offer === '无促销' ? '' : a.value?.offer,
+    a.value?.ctaScore, a.policy?.score,
+    a.platforms?.google?.fit, a.platforms?.google?.verdict,
+    a.platforms?.meta?.fit, a.platforms?.meta?.verdict,
+    a.platforms?.tiktok?.fit, a.platforms?.tiktok?.verdict,
+    (a.policy?.risks || []).map(r => r.label).join('；'),
+    flatTags(m).join('；'),
+    (a.tags?.advice || []).join('；'),
+    m.custom?.notes || '', m.perf?.ctr ?? '', m.perf?.cvr ?? '', m.perf?.roas ?? '', m.perf?.impr ?? ''
+  ].map(q).join(',');
+}
+function doExport(list, filename) {
+  const rows = [csvHead().join(','), ...list.map(csvRow)];
+  const blob = new Blob(['\ufeff' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function exportAll() {
+  const list = filtered();
+  if (!list.length) return toast('当前筛选无素材');
+  doExport(list, `JEV_工作台导出_${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.csv`);
+  toast(`已导出 ${list.length} 条素材`);
+}
+function exportOne(id) {
+  const m = MATERIALS.find(x => x.id === id);
+  if (m) doExport([m], `JEV_${m.name.replace(/[^\w\u4e00-\u9fa5-]/g, '_')}.csv`);
+}
+
+// ---------------- 导入弹窗 ----------------
+function openAdd() {
   $('modalBackdrop').classList.remove('hidden');
-  $('modal').innerHTML=`
+  $('modal').innerHTML = `
     <h2>导入素材</h2>
-    <div class="sub">支持：本地上传 / 批量扫描本地文件夹 / 粘贴素材链接</div>
-    <div class="dropzone" id="dz">点击或拖拽文件到此处上传<small>支持图片、视频（≤500MB / 个）</small>
+    <div class="sub">本地工作台：文件将入库并自动执行 ffprobe 元数据探测 + ffmpeg 关键帧抽取 + JEV 启发式评分</div>
+    <div class="capsline">🛠 引擎能力：ffmpeg ${MODEL.caps?.ffmpeg ? '✓' : '✗'} · ffprobe ${MODEL.caps?.ffprobe ? '✓' : '✗'} · OCR ${MODEL.caps?.tesseract ? '✓' : '✗(可手动粘贴)'} · ASR ${MODEL.caps?.whisper ? '✓' : '✗(可手动粘贴)'} · 多模态AI ${MODEL.ai?.available ? '✓' : '✗(配 GEMINI_API_KEY 启用)'}</div>
+    <div class="dropzone" id="dz">点击或拖拽文件到此处上传<small>支持图片、视频（≤500MB/个，视频自动抽帧）</small>
       <input type="file" id="fileIn" multiple accept="image/*,video/*" hidden>
     </div>
     <div class="line20"></div>
-    <div class="mfield"><label>批量扫描本地素材文件夹（服务端扫描）</label>
-      <input id="importDir" placeholder="输入绝对路径，如 /Users/me/Materials 或 C:/creatives">
-    </div>
+    <div class="mfield"><label>批量扫描本地素材文件夹（服务端递归扫描）</label>
+      <input id="importDir" placeholder="输入绝对路径，如 /Users/me/creatives 或 D:/materials"></div>
     <button class="btn primary" onclick="runFolderImport()">扫描此文件夹入库</button>
     <div class="line20"></div>
     <div class="mfield"><label>粘贴素材链接</label>
-      <input id="linkInput" placeholder="https://…/creative.png 或 MP4 链接">
-    </div>
+      <input id="linkInput" placeholder="https://…/creative.png 或 .mp4 链接"></div>
     <button class="btn primary" onclick="runLinkImport()">从链接入库</button>
-    <div class="import-actions">
-      <button class="btn ghost" onclick="closeModal()">关闭</button>
-    </div>
+    <div class="import-actions"><button class="btn ghost" onclick="closeModal()">关闭</button></div>
     <div id="importProgress" style="margin-top:12px;font-size:13px;color:var(--accent)"></div>`;
-  const dz=$('dz'), fileIn=$('fileIn');
-  dz.onclick=()=>fileIn.click();
-  dz.ondragover=e=>{e.preventDefault();dz.classList.add('drag');};
-  dz.ondragleave=()=>dz.classList.remove('drag');
-  dz.ondrop=e=>{e.preventDefault();dz.classList.remove('drag');doUpload(e.dataTransfer.files);};
-  fileIn.onchange=()=>doUpload(fileIn.files);
+  const dz = $('dz'), fileIn = $('fileIn');
+  dz.onclick = () => fileIn.click();
+  dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag'); };
+  dz.ondragleave = () => dz.classList.remove('drag');
+  dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag'); doUpload(e.dataTransfer.files); };
+  fileIn.onchange = () => doUpload(fileIn.files);
 }
-async function doUpload(files){
-  if(!files||!files.length)return;
-  const form=new FormData();
-  [...files].forEach(f=>form.append('files',f));
-  const prog=$('importProgress'); prog.textContent=`上传中 ${files.length} 个文件…`;
-  try{
-    const r=await fetch(api.upload,{method:'POST',body:form});
+async function doUpload(files) {
+  if (!files || !files.length) return;
+  const form = new FormData();
+  [...files].forEach(x => form.append('files', x));
+  const prog = $('importProgress');
+  prog.textContent = `上传中 ${files.length} 个文件…（视频会执行抽帧，稍候）`;
+  try {
+    await fetch('/api/upload', { method: 'POST', body: form });
     await loadData();
-    prog.textContent=`✓ 已导入 ${files.length} 个素材`;
+    prog.textContent = `✓ 已导入 ${files.length} 个素材`;
     toast('导入成功');
-  }catch(e){prog.textContent='上传失败: '+e.message;}
+  } catch (e) { prog.textContent = '上传失败: ' + e.message; }
 }
-async function runFolderImport(){
-  const dir=$('importDir').value.trim();
-  if(!dir){toast('请输入目录路径');return;}
-  const prog=$('importProgress'); prog.textContent='扫描中…';
-  const r=await fetch(api.import,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir})});
-  const j=await r.json();
-  if(j.error){prog.textContent='✗ '+j.error;}
-  else {await loadData();prog.textContent=`✓ 新增 ${j.added} 个 · 跳过 ${j.skipped}`;toast(`导入 ${j.added} 个素材`);}
-}
-async function runLinkImport(){
-  const url=$('linkInput').value.trim();
-  if(!url){toast('请输入链接');return;}
-  const name=url.split('/').pop()||'linked-material';
-  await fetch(api.materials,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,name})});
+async function runFolderImport() {
+  const dir = $('importDir').value.trim();
+  if (!dir) return toast('请输入目录路径（沙箱内绝对路径）');
+  const prog = $('importProgress');
+  prog.textContent = '扫描 + 入库中…（视频抽帧较慢）';
+  const j = await fetch('/api/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dir }) }).then(r => r.json());
+  if (j.error) { prog.textContent = '✗ ' + j.error; return; }
   await loadData();
-  $('linkInput').value='';
-  toast('已从链接入库');
+  prog.textContent = `✓ 新增 ${j.added} · 跳过 ${j.skipped} · 失败 ${j.failed}`;
+  toast(`导入 ${j.added} 个素材`);
+}
+async function runLinkImport() {
+  const url = $('linkInput').value.trim();
+  if (!url) return toast('请输入链接');
+  const name = url.split('/').pop() || 'linked-material';
+  await fetch('/api/materials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, name }) });
+  await loadData();
+  $('linkInput').value = '';
+  toast('已从链接入库（外链素材默认按单图，可在详情修改）');
 }
 
-// ---------- 评分模型弹窗 ----------
-function openModel(){
+// ---------------- 评分模型弹窗 ----------------
+function openModel() {
   $('modelModalBackdrop').classList.remove('hidden');
-  const w=MODEL.weights;
-  $('modelModal').innerHTML=`
-    <h2>JEV 评分模型</h2>
-    <div class="sub">调整各维度权重（总和不必到100%，系统会自动归一化）。修改后全库重新评分。</div>
-    <div class="id"><b>模型说明</b><div style="font-size:12.5px;color:var(--muted);margin:6px 0 14px">
-      综合分 = Σ(维度分 × 权重) / Σ权重，保留两位。<br>分级：S≥90 优秀 · A≥80 良好 · B≥70 合格 · C≥55 待优化 · D&lt;55 不合格。<br>一票否决：命中任意 critical 违禁项，直接判不可投放（Google/FB）。</div></div>
+  const w = MODEL.weights;
+  const pw = (k, title) => `
+    <div class="wt-group"><h4>${title} 渠道适配权重</h4>
     <div class="wt-grid">
-      ${Object.keys(w).map(k=>`<div class="wt"><label>${MODEL.dimensions[k]}</label><input id="w-${k}" type="number" min="0" max="100" value="${w[k]}"></div>`).join('')}
-      <div class="wt full" style="grid-column:1/-1"><label>总权重</label><b id="wtSum">${Object.values(w).reduce((a,b)=>a+b,0)}</b></div>
-    </div>
-    ${Object.keys(MODEL.descriptions).map(k=>`<div class="dim" style="padding:7px 0"><span class="lbl" style="width:180px">${MODEL.dimensions[k]}</span><span style="font-size:12px;color:#39415c">${MODEL.descriptions[k]}</span></div>`).join('')}
+      ${Object.keys(w.platforms[k]).map(d => `<div class="wt"><label>${d}</label><input id="pw-${k}-${d}" type="number" min="0" max="10" step="0.1" value="${w.platforms[k][d]}"></div>`).join('')}
+    </div></div>`;
+  $('modelModal').innerHTML = `
+    <h2>JEV 评分模型</h2>
+    <div class="sub">综合分 = (J×Wj + E×We + V×Wv) / ΣW × 10。渠道适配 = 平台权重加权(J/E/V/合规/原生感) × 10。保存后全库自动重算。</div>
+    <div class="wt-group"><h4>黄金三维权重</h4>
+    <div class="wt-grid">
+      <div class="wt"><label>J · Hook 吸睛度</label><input id="w-j" type="number" min="0" max="10" step="0.1" value="${w.j}"></div>
+      <div class="wt"><label>E · Engagement 沉浸信任</label><input id="w-e" type="number" min="0" max="10" step="0.1" value="${w.e}"></div>
+      <div class="wt"><label>V · Value & CTA</label><input id="w-v" type="number" min="0" max="10" step="0.1" value="${w.v}"></div>
+    </div></div>
+    ${pw('meta', 'Meta (FB/IG)')}
+    ${pw('google', 'Google (PMax/YouTube)')}
+    ${pw('tiktok', 'TikTok')}
     <div class="import-actions">
       <button class="btn primary" onclick="saveModel()">保存并重新评分全库</button>
       <button class="btn ghost" onclick="closeModel()">关闭</button>
     </div>`;
-  $('wtSum').textContent=Object.values(w).reduce((a,b)=>a+b,0);
 }
-async function saveModel(){
-  const weights={};
-  for(const k of Object.keys(MODEL.weights)) weights[k]=+$('w-'+k).value||0;
-  const r=await fetch(api.model,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({weights})});
-  const j=await r.json();
-  MODEL.weights=j.weights;
+async function saveModel() {
+  const num = id => { const v = Number($(id).value); return Number.isFinite(v) ? Math.max(0, Math.min(10, v)) : 0; };
+  const body = { weights: {
+    j: num('w-j'), e: num('w-e'), v: num('w-v'),
+    platforms: {
+      meta: Object.fromEntries(Object.keys(MODEL.weights.platforms.meta).map(d => [d, num('pw-meta-' + d)])),
+      google: Object.fromEntries(Object.keys(MODEL.weights.platforms.google).map(d => [d, num('pw-google-' + d)])),
+      tiktok: Object.fromEntries(Object.keys(MODEL.weights.platforms.tiktok).map(d => [d, num('pw-tiktok-' + d)]))
+    }
+  }};
+  await fetch('/api/model', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   await loadData();
   closeModel();
-  toast('评分模型已更新，全库已重新评分');
+  toast('模型已更新，全库重新评分');
 }
-function closeModel(){ $('modelModalBackdrop').classList.add('hidden'); $('modelModal').classList.add('hidden'); }
-function closeModal(){ $('modalBackdrop').classList.add('hidden'); $('modal').classList.add('hidden'); }
+function closeModel() { $('modelModalBackdrop').classList.add('hidden'); $('modelModal').classList.add('hidden'); }
+function closeModal() { $('modalBackdrop').classList.add('hidden'); $('modal').classList.add('hidden'); }
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); setTimeout(() => t.classList.add('hidden'), 2600); }
 
-function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2400); }
+// ---------------- 事件绑定 ----------------
+$('btnAdd').onclick = openAdd;
+$('btnModel').onclick = openModel;
+$('btnExport').onclick = exportAll;
+$('drawerBackdrop').onclick = closeDrawer;
+$('modalBackdrop').onclick = closeModal;
+$('modelModalBackdrop').onclick = closeModel;
+$('searchBox').oninput = e => { f.q = e.target.value; renderMain(); };
+$('fGrade').onchange = e => { f.grade = e.target.value; renderMain(); };
+$('fChannel').onchange = e => { f.channel = e.target.value; renderMain(); };
+$('fMedia').onchange = e => { f.media = e.target.value; renderMain(); };
+$('fActor').onchange = e => { f.actor = e.target.value; renderMain(); };
+$('fRange').onchange = e => { f.range = e.target.value; renderMain(); };
+$('sortBy').onchange = e => { sortBy = e.target.value; renderMain(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeDrawer(); closeModal(); closeModel(); } });
 
-// ---------- 事件绑定 ----------
-$('btnAdd').onclick=openAdd;
-$('btnModel').onclick=openModel;
-$('drawerBackdrop').onclick=closeDrawer;
-$('modalBackdrop').onclick=closeModal;
-$('modelModalBackdrop').onclick=closeModel;
-$('searchBox').oninput=e=>{filters.q=e.target.value;renderGrid();};
-$('filterGrade').onchange=e=>{filters.grade=e.target.value;renderGrid();};
-$('filterMedia').onchange=e=>{filters.media=e.target.value;renderGrid();};
-$('filterVerdict').onchange=e=>{filters.verdict=e.target.value;renderGrid();};
-$('sortBy').onchange=e=>{sortBy=e.target.value;renderGrid();};
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();closeModal();closeModel();}});
+// 看板拖拽全局
+document.addEventListener('dragstart', e => {
+  if (e.target.classList.contains('card')) e.dataTransfer.setData('text/plain', e.target.dataset.id);
+});
 
 loadData();

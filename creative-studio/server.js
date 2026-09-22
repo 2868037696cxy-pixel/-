@@ -1,277 +1,330 @@
+// ============================================================================
+// JEV Creative Workbench · 本地后端服务
+// Express + node:sqlite(内置SQLite) + ffmpeg 流水线 + JEV 评分引擎
+// ============================================================================
 import express from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import { DatabaseSync } from 'node:sqlite';
+
 import {
-  DEFAULT_WEIGHTS, DIMENSION_LABELS, DIMENSION_DESC,
-  computeComposite, getGrade, scanComplianceFlags,
-  evaluatePlatformVerdict, autoTags, heuristicDims, COMPLIANCE_RULES
-} from './scoring.js';
+  DEFAULT_WEIGHTS, JEV_LABELS, ENUMS, POLICY_RULES, GRADE_BANDS,
+  recomputeAnalysis, heuristicBaseline, scanPolicy
+} from './engine/jev-engine.js';
+import { buildTags, indexText } from './engine/tags.js';
+import { probeMedia, extractKeyframes, buildTimeline, capabilities } from './engine/pipeline.js';
+import { analyzeWithAI, aiAvailable } from './engine/ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const LIBRARY_DIR = path.join(ROOT, 'library');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-const MODEL_FILE = path.join(DATA_DIR, 'model.json');
+const THUMBS_DIR = path.join(LIBRARY_DIR, 'thumbs');
+const DB_FILE = path.join(DATA_DIR, 'workbench.db');
 
-for (const dir of [DATA_DIR, LIBRARY_DIR]) {
+for (const dir of [DATA_DIR, LIBRARY_DIR, THUMBS_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
-// ---------- 存储 ----------
-function loadDB() {
-  if (!fs.existsSync(DB_FILE)) return { materials: [] };
-  try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf-8')); }
-  catch { return { materials: [] }; }
-}
-function saveDB(db) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
-}
-function loadModel() {
-  if (fs.existsSync(MODEL_FILE)) {
-    try { return JSON.parse(fs.readFileSync(MODEL_FILE, 'utf-8')); } catch {}
-  }
+// ---------- SQLite 持久化 ----------
+const db = new DatabaseSync(DB_FILE);
+db.exec(`
+CREATE TABLE IF NOT EXISTS materials (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, ref TEXT,
+  createdAt INTEGER, updatedAt INTEGER, status TEXT DEFAULT 'active',
+  basic TEXT, analysis TEXT, timeline TEXT, subtitles TEXT, custom TEXT, perf TEXT
+);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+`);
+
+// 模型权重存取
+const loadWeights = () => {
+  try {
+    const row = db.prepare(`SELECT value FROM meta WHERE key='weights'`).get();
+    if (row) return JSON.parse(row.value);
+  } catch {}
   return DEFAULT_WEIGHTS;
-}
-function saveModel(model) { fs.writeFileSync(MODEL_FILE, JSON.stringify(model, null, 2)); }
+};
+const saveWeights = w => db.prepare(`INSERT INTO meta(key,value) VALUES('weights',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(JSON.stringify(w));
+let weights = loadWeights();
 
-let model = loadModel();
+// 素材行 → 对象
+const rowToMaterial = row => ({
+  id: row.id, name: row.name, kind: row.kind, ref: row.ref,
+  createdAt: row.createdAt, updatedAt: row.updatedAt, status: row.status,
+  basic: JSON.parse(row.basic), analysis: JSON.parse(row.analysis),
+  timeline: JSON.parse(row.timeline), subtitles: JSON.parse(row.subtitles),
+  custom: JSON.parse(row.custom), perf: JSON.parse(row.perf)
+});
+const getMaterial = id => {
+  const row = db.prepare(`SELECT * FROM materials WHERE id=? AND status='active'`).get(id);
+  return row ? rowToMaterial(row) : null;
+};
+const saveMaterial = m => {
+  db.prepare(`INSERT INTO materials(id,name,kind,ref,createdAt,updatedAt,status,basic,analysis,timeline,subtitles,custom,perf)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,ref=excluded.ref,
+    updatedAt=excluded.updatedAt,basic=excluded.basic,analysis=excluded.analysis,
+    timeline=excluded.timeline,subtitles=excluded.subtitles,custom=excluded.custom,perf=excluded.perf`).run(
+    m.id, m.name, m.kind, m.ref, m.createdAt, m.updatedAt, m.status,
+    JSON.stringify(m.basic), JSON.stringify(m.analysis), JSON.stringify(m.timeline),
+    JSON.stringify(m.subtitles), JSON.stringify(m.custom), JSON.stringify(m.perf)
+  );
+};
 
-// 允许的媒体扩展
-const IMAGE_EXT = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.avif'];
-const VIDEO_EXT = ['.mp4', '.mov', '.webm', '.mkv', '.m4v', '.avi'];
-const MEDIA_EXT = [...IMAGE_EXT, ...VIDEO_EXT, '.mp3', '.wav', '.ogg'];
+// ---------- 核心：素材全链路重算 ----------
+function refresh(m) {
+  const { hook, engagement, value } = m.analysis;
+  // 合规扫描：文件名+字幕+文案
+  const autoHits = scanPolicy([indexText(m)]);
+  // 合并勾选风险（自动命中强制 checked）
+  const riskState = m.custom.riskState || {};            // { 'key': bool } 人工勾选
+  const risks = POLICY_RULES.map(r => {
+    const auto = autoHits.find(h => h.key === r.key);
+    const checked = auto ? true : (riskState[r.key] ?? false);
+    return checked ? (auto || { key: r.key, level: r.severity, label: r.label, automatic: false }) : null;
+  }).filter(Boolean);
 
-function mediaTypeOf(file) {
-  const ext = path.extname(file).toLowerCase();
-  if (IMAGE_EXT.includes(ext)) return 'image';
-  if (VIDEO_EXT.includes(ext)) return 'video';
-  return 'other';
-}
-
-// 生成素材对象（未评分时用启发式预评）
-function buildMaterial({ id, name, kind, ref, mediaType, sizeBytes, createdAt }) {
-  const dims = heuristicDims({ mediaType, sizeM: sizeBytes ? sizeBytes / 1024 / 1024 : 0 });
-  const composite = computeComposite(dims, model);
-  const gradeInfo = getGrade(composite);
-  const flags = scanComplianceFlags(name, ref);
-  const verdict = evaluatePlatformVerdict(dims, composite, flags, mediaType);
-  const tags = autoTags({ score: composite, grade: gradeInfo, dims, mediaType, flags, complianceDim: dims.compliance });
-  return {
-    id, name, kind, ref, mediaType, sizeBytes,
-    createdAt, updatedAt: createdAt,
-    dims, composite, grade: gradeInfo.grade,
-    gradeInfo: { label: gradeInfo.label, advice: gradeInfo.advice, min: gradeInfo.min },
-    flags: flags.map(f => f).concat(COMPLIANCE_RULES.filter(r => !flags.some(h => h.key === r.key)).map(r => ({ key: r.key, automatic: false }))).map(f => ({ ...f, checked: flags.some(h => h.key === f.key) })),
-    verdict, tags: tags.filter(t => !flags.some(h => COMPLIANCE_RULES.some(r => r.key === h.key && r.label === t))).concat(flags.map(f => COMPLIANCE_RULES.find(r => r.key === f.key && r.label).label).filter(Boolean)),
-    customTags: [],
-    category: '未分类',
-    notes: '',
-    meta: {} // ctr/cvr/roas/impr
-  };
-}
-
-// 从任何维度/flag/meta 重算并更新一个素材（服务端权威重算）
-function recompute(m, overrideFlagCheck = []) {
-  const flags = overrideFlagCheck.length ? overrideFlagCheck : m.flags.filter(f => f.checked).map(f => ({ key: f.key }));
-  const composite = computeComposite(m.dims, model);
-  const gradeInfo = getGrade(composite);
-  const verdict = evaluatePlatformVerdict(m.dims, composite, flags, m.mediaType);
-  const complianceDim = m.dims.compliance;
-  m.composite = composite;
-  m.grade = gradeInfo.grade;
-  m.gradeInfo = gradeInfo;
-  m.verdict = verdict;
-  m.tags = autoTags({ score: composite, grade: gradeInfo, dims: m.dims, mediaType: m.mediaType, flags, complianceDim: m.dims.compliance });
-  m.flags = COMPLIANCE_RULES.map(r => {
-    const existing = m.flags.find(f => f.key === r.key);
-    return { key: r.key, automatic: existing ? existing.automatic : false, checked: existing ? existing.checked : false };
-  });
+  m.analysis = recomputeAnalysis(
+    { hook, engagement, value, policy: { score: 9, risks } },
+    m.basic, weights
+  );
+  m.analysis.tags = buildTags(m, m.analysis, m.basic, m.custom);
+  m.analysis.aiAssessed = m.analysis.aiAssessed || false;
+  m.timeline = buildTimeline(m.basic, m.analysis);
   m.updatedAt = Date.now();
   return m;
 }
 
-const app = express();
-app.use(express.json({ limit: '10mb' }));
+// ---------- 素材入库 ----------
+const MEDIA_EXT = ['.jpg','.jpeg','.png','.gif','.webp','.bmp','.svg','.avif','.mp4','.mov','.webm','.mkv','.m4v','.avi'];
+const IMAGE_EXT = ['.jpg','.jpeg','.png','.gif','.webp','.bmp','.svg','.avif'];
+const VIDEO_EXT = ['.mp4','.mov','.webm','.mkv','.m4v','.avi'];
+const mediaTypeOf = f => VIDEO_EXT.includes(path.extname(f).toLowerCase()) ? 'video' : 'image';
 
-// multer 上传（存本地库）
+// 对已落盘文件执行流水线并入库（probe→抽帧→基线评分→标签→时间轴）
+async function finalizeLocal(id, name, localFile, sizeBytes, kind, ref) {
+  const mediaType = mediaTypeOf(localFile);
+  const probed = await probeMedia(localFile);
+  const basic = { mediaType, sizeBytes, ...probed, poster: null, frames: [] };
+  if (mediaType === 'video' && probed.durationSec > 0) {
+    const kf = await extractKeyframes(localFile, id, THUMBS_DIR, probed.durationSec);
+    basic.poster = kf.poster; basic.frames = kf.frames;
+  }
+  const analysis = heuristicBaseline(basic);
+  const m = {
+    id, name, kind, ref, createdAt: Date.now(), updatedAt: Date.now(), status: 'active',
+    basic, analysis,
+    timeline: { nodes: [], curve: [] },
+    subtitles: [],
+    custom: { category: '', notes: '', customTags: [], manualChannel: null, manualHookType: null, manualGrade: null, riskState: {} },
+    perf: { ctr: null, cvr: null, roas: null, impr: null }
+  };
+  refresh(m);
+  saveMaterial(m);
+  return m;
+}
+
+// ---------- Express ----------
+const app = express();
+app.use(express.json({ limit: '20mb' }));
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, LIBRARY_DIR),
   filename: (req, file, cb) => {
     const id = crypto.randomBytes(8).toString('hex');
-    const ext = path.extname(file.originalname).toLowerCase() || '.bin';
-    cb(null, id + ext);
+    cb(null, id + (path.extname(file.originalname).toLowerCase() || '.bin'));
   }
 });
 const upload = multer({ storage, limits: { fileSize: 500 * 1024 * 1024 } });
 
-// ---------- API ----------
+app.use('/media', express.static(LIBRARY_DIR));
+app.use(express.static(PUBLIC_DIR));
 
-// 全库
+// ---- 查询 ----
 app.get('/api/materials', (req, res) => {
-  res.json(loadDB().materials);
+  const rows = db.prepare(`SELECT * FROM materials WHERE status='active' ORDER BY updatedAt DESC`).all();
+  res.json(rows.map(rowToMaterial));
 });
-
-// 保存一条（评分/标签/备注等）
-app.put('/api/materials/:id', (req, res) => {
-  const db = loadDB();
-  const idx = db.materials.findIndex(m => m.id === req.params.id);
-  if (idx < 0) return res.status(404).json({ error: 'not found' });
-  const m = db.materials[idx];
-  const body = req.body || {};
-
-  if (body.dims) m.dims = { ...m.dims, ...body.dims };
-  if (body.customTags !== undefined) m.customTags = body.customTags;
-  if (body.category !== undefined) m.category = body.category;
-  if (body.notes !== undefined) m.notes = body.notes;
-  if (body.meta !== undefined) m.meta = body.meta;
-  if (body.checkedFlags !== undefined) {
-    m.flags = m.flags.map(f => ({ ...f, checked: body.checkedFlags.includes(f.key) }));
-  }
-  recompute(m);
-  saveDB(db);
+app.get('/api/materials/:id', (req, res) => {
+  const m = getMaterial(req.params.id);
+  if (!m) return res.status(404).json({ error: 'not found' });
   res.json(m);
 });
 
-// 新建：粘贴链接 或 传 name/kind
+// ---- 更新（评分/标签/合规/字幕/自定义/实况） ----
+app.put('/api/materials/:id', (req, res) => {
+  const m = getMaterial(req.params.id);
+  if (!m) return res.status(404).json({ error: 'not found' });
+  const b = req.body || {};
+  if (b.analysis) {
+    const a = b.analysis;
+    if (a.hook) m.analysis.hook = { ...m.analysis.hook, ...a.hook };
+    if (a.engagement) m.analysis.engagement = { ...m.analysis.engagement, ...a.engagement };
+    if (a.value) m.analysis.value = { ...m.analysis.value, ...a.value };
+    if (a.aiAssessed !== undefined) m.analysis.aiAssessed = a.aiAssessed;
+  }
+  if (b.riskState) m.custom.riskState = b.riskState;
+  if (b.custom) m.custom = { ...m.custom, ...b.custom };
+  if (b.subtitles) m.subtitles = b.subtitles;
+  if (b.perf) m.perf = { ...m.perf, ...b.perf };
+  if (b.basic) m.basic = { ...m.basic, ...b.basic };
+  refresh(m);
+  saveMaterial(m);
+  res.json(m);
+});
+
+// ---- 新建：链接/自定义条目 ----
 app.post('/api/materials', (req, res) => {
-  const db = loadDB();
   const { name, url } = req.body || {};
   if (!name && !url) return res.status(400).json({ error: '需要 name 或 url' });
-  const mName = url ? (name || url.split('/').pop() || 'linked-material') : name;
-  const m = buildMaterial({
-    id: crypto.randomBytes(8).toString('hex'),
-    name: mName,
-    kind: 'url',
-    ref: url || '',
-    mediaType: 'image', // 链接类型未知，默认按图；用户可在详情改
-    sizeBytes: 0,
-    createdAt: Date.now()
-  });
-  db.materials.unshift(m);
-  saveDB(db);
+  const id = crypto.randomBytes(8).toString('hex');
+  const m = {
+    id, name: name || url.split('/').pop() || 'linked-material',
+    kind: 'url', ref: url || '', createdAt: Date.now(), updatedAt: Date.now(), status: 'active',
+    basic: { mediaType: 'image', sizeBytes: 0, durationSec: 0, width: 0, height: 0, aspect: null, resolution: null, fps: 0, hasAudio: false, poster: null, frames: [] },
+    analysis: heuristicBaseline({ mediaType: 'image' }),
+    timeline: { nodes: [], curve: [] }, subtitles: [],
+    custom: { category: '', notes: '', customTags: [], manualChannel: null, manualHookType: null, manualGrade: null, riskState: {} },
+    perf: { ctr: null, cvr: null, roas: null, impr: null }
+  };
+  refresh(m);
+  saveMaterial(m);
   res.json(m);
 });
 
-// 页面上传（文件）
-app.post('/api/upload', upload.single('files'), (req, res) => {
+// ---- 上传 ----
+app.post('/api/upload', upload.single('files'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: '缺少文件' });
-  const db = loadDB();
-  const ext = path.extname(req.file.filename);
-  mediaTypeGuess(req, res, () => {
-    const m = buildMaterial({
-      id: req.file.filename.replace(ext, ''),
-      name: req.file.originalname || req.file.filename,
-      kind: 'local',
-      ref: '/media/' + req.file.filename,
-      mediaType: mediaTypeOf(req.file.filename),
-      sizeBytes: req.file.size,
-      createdAt: Date.now()
-    });
-    db.materials.unshift(m);
-    saveDB(db);
-    res.json({ material: m, uploadedFile: req.file.filename });
-  });
+  try {
+    const ext = path.extname(req.file.filename);
+    const id = req.file.filename.replace(ext, '');
+    const m = await finalizeLocal(id, req.file.originalname || req.file.filename, req.file.path, req.file.size, 'upload', '/media/' + req.file.filename);
+    res.json({ material: m });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
-function mediaTypeGuess(req, res, next) { const _ = req; next(); }
 
-// 本地文件夹批量导入（服务端扫描路径）
-app.post('/api/import', (req, res) => {
+// ---- 本地文件夹批量导入 ----
+app.post('/api/import', async (req, res) => {
   const { dir } = req.body || {};
   if (!dir) return res.status(400).json({ error: '缺少目录路径 dir' });
-  const abs = path.resolve(dir);
-  if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) {
-    return res.status(400).json({ error: '目录不存在: ' + abs });
-  }
-  const db = loadDB();
-  const existingRefs = new Set(db.materials.map(m => m.kind === 'local' ? m.ref : null).filter(Boolean));
-  let added = 0, skipped = 0;
-  const walk = (dirAbs) => {
-    let items = [];
-    try { items = fs.readdirSync(dirAbs, { withFileTypes: true }); } catch { return; }
-    for (const it of items) {
-      const full = path.join(dirAbs, it.name);
-      if (it.isDirectory()) walk(full);
+  const abs = path.resolve(dir.trim());
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) return res.status(400).json({ error: '目录不存在: ' + abs });
+
+  let added = 0, skipped = 0, failed = 0;
+  const walk = async (d) => {
+    for (const it of fs.readdirSync(d, { withFileTypes: true })) {
+      const full = path.join(d, it.name);
+      if (it.isDirectory()) await walk(full);
       else if (it.isFile() && MEDIA_EXT.includes(path.extname(it.name).toLowerCase())) {
-        const stat = fs.statSync(full);
-        const rel = path.relative(abs, full);
-        const ref = '/media/' + encodeURIComponent(path.basename(full));
-        if (existingRefs.has(rel)) { skipped++; continue; }
-        // 复制进本地库
+        if (db.prepare(`SELECT id FROM materials WHERE name=? AND status='active'`).get(it.name)) { skipped++; continue; }
         const id = crypto.randomBytes(8).toString('hex');
         const ext = path.extname(it.name).toLowerCase();
         const dest = path.join(LIBRARY_DIR, id + ext);
-        fs.copyFileSync(full, dest);
-        const m = buildMaterial({
-          id, name: it.name, kind: 'local', ref: '/media/' + id + ext,
-          mediaType: mediaTypeOf(it.name), sizeBytes: stat.size, createdAt: Date.now()
-        });
-        existingRefs.add(rel);
-        db.materials.unshift(m);
-        added++;
+        try {
+          fs.copyFileSync(full, dest);
+          await finalizeLocal(id, it.name, dest, fs.statSync(full).size, 'local', '/media/' + id + ext);
+          added++;
+        } catch { failed++; }
       }
     }
   };
-  walk(abs);
-  saveDB(db);
-  res.json({ added, skipped, dir: abs });
+  await walk(abs);
+  res.json({ added, skipped, failed, dir: abs });
 });
 
-// 读取媒体文件
-app.use('/media', express.static(LIBRARY_DIR));
-
-// 删除素材（同时删除本地媒体文件）
+// ---- 删除 ----
 app.delete('/api/materials/:id', (req, res) => {
-  const db = loadDB();
-  const idx = db.materials.findIndex(m => m.id === req.params.id);
-  if (idx < 0) return res.status(404).json({ error: 'not found' });
-  const m = db.materials[idx];
-  if (m.kind === 'local' && m.ref && m.ref.startsWith('/media/')) {
-    const file = path.join(LIBRARY_DIR, path.basename(m.ref));
-    try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch {}
-  }
-  db.materials.splice(idx, 1);
-  saveDB(db);
+  const m = getMaterial(req.params.id);
+  if (!m) return res.status(404).json({ error: 'not found' });
+  const del = (ref) => {
+    if (ref && ref.startsWith('/media/')) {
+      try { fs.unlinkSync(path.join(LIBRARY_DIR, path.basename(ref))); } catch {}
+    }
+  };
+  del(m.ref);
+  for (const f of m.basic?.frames || []) del('/media/thumbs/' + f.file);
+  db.prepare(`UPDATE materials SET status='deleted' WHERE id=?`).run(m.id);
   res.json({ ok: true });
 });
 
-// 评分模型（权重）读写
-app.get('/api/model', (req, res) => {
+// ---- AI 多模态评测（可选，需 GEMINI_API_KEY） ----
+app.post('/api/analyze/:id', async (req, res) => {
+  const m = getMaterial(req.params.id);
+  if (!m) return res.status(404).json({ error: 'not found' });
+  if (!aiAvailable()) return res.status(200).json({ ai: false, message: '未配置 GEMINI_API_KEY，当前使用本地启发式评分。' });
+  try {
+    const frames = (m.basic?.frames || []).map(f => path.join(THUMBS_DIR, f.file)).filter(fs.existsSync);
+    if (!frames.length) return res.status(200).json({ ai: false, message: '无关键帧可分析' });
+    const result = await analyzeWithAI(frames, frames.map(() => 'image/jpeg'));
+    if (!result) return res.status(200).json({ ai: false, message: 'AI 评测未返回有效结果' });
+    m.analysis.hook = { ...m.analysis.hook, ...result.hook };
+    m.analysis.engagement = { ...m.analysis.engagement, ...result.engagement };
+    m.analysis.value = { ...m.analysis.value, ...result.value };
+    m.analysis.aiAssessed = true;
+    const pr = result.policy_risks || [];
+    pr.forEach(r => { if (r.key) m.custom.riskState[r.key] = true; });
+    refresh(m);
+    saveMaterial(m);
+    res.json({ ai: true, material: m });
+  } catch (e) {
+    res.status(500).json({ ai: false, error: e.message });
+  }
+});
+
+// ---- 模型与能力 ----
+app.get('/api/model', async (req, res) => {
   res.json({
-    weights: model,
-    dimensions: DIMENSION_LABELS,
-    descriptions: DIMENSION_DESC,
-    rules: COMPLIANCE_RULES,
-    grades: [
-      {grade:'S',min:90,label:'优秀'},{grade:'A',min:80,label:'良好'},
-      {grade:'B',min:70,label:'合格'},{grade:'C',min:55,label:'待优化'},{grade:'D',min:0,label:'不合格'}
-    ]
+    weights,
+    labels: JEV_LABELS,
+    enums: ENUMS,
+    policyRules: POLICY_RULES,
+    grades: GRADE_BANDS,
+    ai: { available: aiAvailable() },
+    caps: await capabilities()
   });
 });
 app.put('/api/model', (req, res) => {
   const w = req.body?.weights;
   if (!w) return res.status(400).json({ error: '缺少 weights' });
-  const sanitized = {};
-  for (const k of Object.keys(DEFAULT_WEIGHTS)) {
-    sanitized[k] = Math.max(0, Math.min(100, Number(w[k]) || DEFAULT_WEIGHTS[k]));
+  const clean = {
+    j: num(w.j, DEFAULT_WEIGHTS.j),
+    e: num(w.e, DEFAULT_WEIGHTS.e),
+    v: num(w.v, DEFAULT_WEIGHTS.v),
+    platforms: {
+      meta:   sanW(w.platforms?.meta, DEFAULT_WEIGHTS.platforms.meta),
+      google: sanW(w.platforms?.google, DEFAULT_WEIGHTS.platforms.google),
+      tiktok: sanW(w.platforms?.tiktok, DEFAULT_WEIGHTS.platforms.tiktok)
+    }
+  };
+  weights = clean;
+  saveWeights(weights);
+  for (const row of db.prepare(`SELECT * FROM materials WHERE status='active'`).all()) {
+    const m = rowToMaterial(row);
+    refresh(m); saveMaterial(m);
   }
-  model = sanitized;
-  saveModel(model);
-  // 重算全库
-  const db = loadDB();
-  db.materials.forEach(m => recompute(m));
-  saveDB(db);
-  res.json({ weights: model });
+  res.json({ weights });
 });
-
-// 静态前端
-app.use(express.static(PUBLIC_DIR));
+const num = (x, d) => { const n = Number(x); return Number.isFinite(n) ? Math.max(0, Math.min(10, n)) : d; };
+const sanW = (o, def) => {
+  const r = {};
+  for (const k of Object.keys(def)) r[k] = num(o?.[k], def[k]);
+  return r;
+};
 
 const PORT = process.env.PORT || 8700;
-app.listen(PORT, () => {
-  console.log(`JEV Creative Studio 已启动: http://localhost:${PORT}`);
+// 启动时全库重算（规则/模型更新后自动纠正存量评分）
+for (const row of db.prepare(`SELECT * FROM materials WHERE status='active'`).all()) {
+  try { const m = rowToMaterial(row); refresh(m); saveMaterial(m); } catch {}
+}
+app.listen(PORT, async () => {
+  const caps = await capabilities();
+  console.log(`JEV Creative Workbench 已启动: http://localhost:${PORT}`);
+  console.log(`能力: ffmpeg=${caps.ffmpeg} ffprobe=${caps.ffprobe} OCR=${caps.tesseract} ASR=${caps.whisper} AI=${aiAvailable()}`);
 });
