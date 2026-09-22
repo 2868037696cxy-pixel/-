@@ -1526,6 +1526,14 @@ $('drawerBackdrop').onclick = closeDrawer;
 $('modalBackdrop').onclick = closeModal;
 $('modelModalBackdrop').onclick = closeModel;
 $('aiModalBackdrop').onclick = closeAIReview;
+
+// 筛选面板折叠
+let filterCollapsed = false;
+$('btnToggleFilter').onclick = () => {
+  filterCollapsed = !filterCollapsed;
+  document.body.classList.toggle('filter-collapsed', filterCollapsed);
+  $('btnToggleFilter').textContent = filterCollapsed ? '☰' : '✕';
+};
 $('searchBox').oninput = e => { F.q = e.target.value; renderPanel(); renderMain(); };
 $('fMin').oninput = e => { F.minScore = Math.max(0, Math.min(100, +e.target.value || 0)); renderMain(); renderPanel(); };
 $('fMax').oninput = e => { F.maxScore = Math.max(0, Math.min(100, +e.target.value || 100)); renderMain(); renderPanel(); };
@@ -1536,6 +1544,13 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeDrawer(); closeModal(); closeModel(); closeAIReview();
     if (view === 'review' && revMode === 'bulk') bulkClearSel();
+    if (document.activeElement === $('searchBox')) $('searchBox').blur();
+    return;
+  }
+  // `/` 快速聚焦全局搜索（输入框内不触发）
+  if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) {
+    e.preventDefault();
+    $('searchBox').focus();
     return;
   }
   // 审片模式快捷键（输入框内不触发）

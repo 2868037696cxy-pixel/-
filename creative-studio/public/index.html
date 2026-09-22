@@ -8,22 +8,28 @@
 </head>
 <body>
 <div id="app">
-  <!-- ============ 全局顶栏 ============ -->
+  <!-- ============ 全局顶栏：品牌 · 搜索 · 统计胶囊 · 操作 ============ -->
   <header class="topbar">
     <div class="brand">
       <div class="logo">JEV</div>
       <div class="brand-text">
         <h1>Creative&nbsp;Workbench</h1>
-        <span>跨境电商素材 · AI 评分审片工作台</span>
+        <span>跨境电商素材 · AI 评分审片</span>
       </div>
     </div>
 
+    <div class="topsearch">
+      <span class="topsearch-ico">⌕</span>
+      <input id="searchBox" class="input" placeholder="搜索素材名称 / 标签 / 痛点…">
+      <kbd class="topsearch-kbd">/</kbd>
+    </div>
+
     <div class="stats" id="globalStats">
-      <div class="stat"><b id="statTotal">0</b><span>素材总数</span></div>
-      <div class="stat"><b id="statAvg">--</b><span>平均分</span></div>
-      <div class="stat"><b id="statTop">0</b><span>S/A 级</span></div>
-      <div class="stat risk"><b id="statRisk">0</b><span>风险素材</span></div>
-      <div class="stat"><b id="statGo">0</b><span>可投放</span></div>
+      <div class="stat"><b id="statTotal">0</b><span>素材</span></div>
+      <div class="stat"><b id="statAvg">--</b><span>均分</span></div>
+      <div class="stat"><b id="statTop">0</b><span>S/A</span></div>
+      <div class="stat risk"><b id="statRisk">0</b><span>风险</span></div>
+      <div class="stat"><b id="statGo">0</b><span>可投</span></div>
     </div>
 
     <div class="top-actions">
@@ -34,15 +40,14 @@
     </div>
   </header>
 
-  <!-- ============ 主布局：侧栏筛选 + 工作区 ============ -->
+  <!-- ============ 主布局 ============ -->
   <div class="layout">
-    <!-- 左侧：可视化筛选面板 -->
+    <!-- 左侧筛选面板（可折叠） -->
     <aside class="fpanel" id="fpanel">
       <div class="fpanel-head">
-        <b>🔍 筛选素材</b>
+        <b>筛选素材</b>
         <button class="tcloud-clear" id="fClear">清空</button>
       </div>
-      <div class="fsearch"><input id="searchBox" class="input" placeholder="搜索名称 / 标签 / 痛点…"></div>
 
       <div class="fgroup">
         <label>评级</label>
@@ -62,19 +67,19 @@
       </div>
       <div class="fgroup">
         <label>品类</label>
-        <div class="checks scroll" id="fCats" style="max-height:140px"></div>
+        <div class="checks scroll" id="fCats" style="max-height:132px"></div>
       </div>
       <div class="fgroup">
         <label>素材类型</label>
         <div class="checks" id="fMedia"></div>
       </div>
       <div class="fgroup">
-        <label>渠道可投（多选 = 或）</label>
+        <label>渠道可投</label>
         <div class="checks" id="fChannels"></div>
       </div>
       <div class="fgroup">
-        <label>仅看风险素材</label>
-        <label class="check-row"><input type="checkbox" id="fRiskOnly" style="width:auto"><span class="cr-label">⚠ 只显示命中合规风险的素材</span></label>
+        <label>仅看风险</label>
+        <label class="check-row"><input type="checkbox" id="fRiskOnly" style="width:auto"><span class="cr-label">只显示命中合规风险的素材</span></label>
       </div>
       <div class="fgroup">
         <label>出镜类型</label>
@@ -85,7 +90,7 @@
         <div class="checks scroll" id="fHooks"></div>
       </div>
       <div class="fgroup">
-        <label>标签（点击多选）</label>
+        <label>标签</label>
         <div class="checks scroll tags" id="fTags"></div>
       </div>
 
@@ -94,10 +99,11 @@
       </div>
     </aside>
 
-    <!-- 右侧：工作区 -->
+    <!-- 右侧工作区 -->
     <div class="maincol">
       <section class="results-bar">
-        <div class="hitinfo">命中 <b id="hitCount">0</b> / 共 <b id="totalCount">0</b> 个素材</div>
+        <button class="btn fpanel-toggle" id="btnToggleFilter" title="收起/展开筛选面板">☰</button>
+        <div class="hitinfo">命中 <b id="hitCount">0</b> / <b id="totalCount">0</b></div>
         <div class="viewtabs">
           <button class="vtab active" data-view="grid" onclick="setView('grid')">素材墙</button>
           <button class="vtab" data-view="review" onclick="setView('review')">审片扫描</button>
