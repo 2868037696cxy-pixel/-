@@ -8,7 +8,6 @@ const fmt = n => Math.round(n * 10) / 10;
 let MATERIALS = [];
 let MODEL = null;   // {weights, labels, enums, policyRules, grades, ai, caps}
 let view = 'grid';
-let boardBy = 'grade';
 let selectedId = null;
 let sortBy = 'composite-desc';
 
@@ -203,30 +202,6 @@ function renderPanel() {
   $('fMedia').innerHTML = [['video', '🎬 视频'], ['image', '🖼️ 单图']].map(([k, l]) =>
     `<label><input type="checkbox" ${F.media.has(k) ? 'checked' : ''} onchange="setF('media','${k}',this.checked)">${l}<span class="cnt">${mediaCount[k] || 0}</span></label>`).join('');
 
-  // 渠道可投
-  const chCount = {};
-  for (const k of ['google', 'meta', 'tiktok']) chCount[k] = MATERIALS.filter(m => m.analysis.platforms?.[k]?.verdict === 'GO').length;
-  $('fChannels').innerHTML = [['google', 'Google Ads 可投'], ['meta', 'Meta/FB 可投'], ['tiktok', 'TikTok 可投']].map(([k, l]) =>
-    `<label><input type="checkbox" ${F.channels.has(k) ? 'checked' : ''} onchange="setF('channels','${k}',this.checked)">${l}<span class="cnt">${chCount[k] || 0}</span></label>`).join('');
-
-  // 出镜类型
-  const actCount = countBy(m => m.analysis.engagement?.actor);
-  $('fActors').innerHTML = MODEL.enums.actor.map(a =>
-    `<label><input type="checkbox" ${F.actors.has(a) ? 'checked' : ''} onchange="setF('actors','${esc(a).replace(/'/g, "\\'")}',this.checked)">${a}<span class="cnt">${actCount[a] || 0}</span></label>`).join('');
-
-  // Hook 类型
-  const hookCount = countBy(m => m.analysis.hook?.hookType);
-  $('fHooks').innerHTML = MODEL.enums.hookType.map(h =>
-    `<label><input type="checkbox" ${F.hooks.has(h) ? 'checked' : ''} onchange="setF('hooks','${esc(h).replace(/'/g, "\\'")}',this.checked)">${h}<span class="cnt">${hookCount[h] || 0}</span></label>`).join('');
-
-  // 标签 Top 24
-  const tagCount = {};
-  for (const m of MATERIALS) for (const t of flatTags(m)) tagCount[t] = (tagCount[t] || 0) + 1;
-  const top = Object.entries(tagCount).sort((a, b) => b[1] - a[1]).slice(0, 24);
-  $('fTags').innerHTML = top.map(([t, c]) =>
-    `<label><input type="checkbox" ${F.tags.has(t) ? 'checked' : ''} onchange="setF('tags',decodeURIComponent('${encodeURIComponent(t)}'),this.checked)">${esc(t)}<span class="cnt">${c}</span></label>`).join('')
-    || '<div class="subtle">素材入库后自动生成标签</div>';
-
   // 汇总
   const parts = [];
   if (F.q) parts.push(`搜索“${F.q}”`);
@@ -234,10 +209,6 @@ function renderPanel() {
   if (F.categories.size) parts.push('品类 ' + [...F.categories].join('/'));
   if (F.review.size) parts.push('审片 ' + [...F.review].map(x => x === 'todo' ? '未审' : x === 'keep' ? '通过' : '淘汰').join('/'));
   if (F.media.size) parts.push([...F.media].map(x => x === 'video' ? '视频' : '单图').join('/'));
-  if (F.channels.size) parts.push([...F.channels].map(k => CH_NAME[k]).join('或') + ' 可投');
-  if (F.actors.size) parts.push('出镜 ' + [...F.actors].join('/'));
-  if (F.hooks.size) parts.push('Hook ' + [...F.hooks].join('/'));
-  if (F.tags.size) parts.push('标签×' + F.tags.size);
   if (F.riskOnly) parts.push('仅风险素材');
   if (F.minScore > 0 || F.maxScore < 100) parts.push(`${F.minScore}-${F.maxScore} 分`);
   $('fSummary').textContent = parts.length ? parts.join(' · ') : '显示全部素材';
@@ -250,8 +221,7 @@ function renderPanel() {
   const badges = {
     Grades: F.grades.size, Review: F.review.size,
     Score: (F.minScore > 0 || F.maxScore < 100) ? 1 : 0,
-    Cats: F.categories.size, Media: F.media.size, Channels: F.channels.size,
-    Risk: F.riskOnly ? 1 : 0, Actors: F.actors.size, Hooks: F.hooks.size, Tags: F.tags.size
+    Cats: F.categories.size, Media: F.media.size
   };
   let totalActive = 0;
   for (const [k, n] of Object.entries(badges)) {
@@ -292,7 +262,7 @@ function applyPreset(id) {
   resetFilterState();
   if (wasActive) { renderPanel(); renderStats(); renderMain(); return; }
   if (id === 'todo') F.review.add('todo');
-  else if (id === 'risk') { F.riskOnly = true; $('fRiskOnly').checked = true; }
+  else if (id === 'risk') F.riskOnly = true;
   else if (id === 'top') { F.grades.add('S'); F.grades.add('A'); }
   else if (id === 'goable') { F.channels.add('google'); F.channels.add('meta'); F.channels.add('tiktok'); }
   renderPanel(); renderStats(); renderMain();
@@ -312,7 +282,7 @@ function resetFilterState() {
   F.q = ''; F.grades.clear(); F.categories.clear(); F.review.clear(); F.media.clear(); F.channels.clear();
   F.actors.clear(); F.hooks.clear(); F.tags.clear();
   F.minScore = 0; F.maxScore = 100; F.riskOnly = false;
-  $('searchBox').value = ''; $('fMin').value = ''; $('fMax').value = ''; $('fRiskOnly').checked = false;
+  $('searchBox').value = ''; $('fMin').value = ''; $('fMax').value = '';
 }
 function clearFilters() {
   resetFilterState();
@@ -490,7 +460,7 @@ function cardHTML(m) {
   const dupBadge = dup
     ? `<span class="dup-badge" title="重复变体 ×${dup.count} · 基名 ${dup.base}${dup.isBest ? ' · 组内最优（建议保留）' : ' · 建议精简'}" onclick="event.stopPropagation();setView('dups')">⧉×${dup.count}</span>`
     : '';
-  return `<article class="card" data-id="${m.id}" draggable="true" onclick="openDrawer('${m.id}')">
+  return `<article class="card" data-id="${m.id}" tabindex="0" onclick="openDrawer('${m.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDrawer('${m.id}')}" title="点击查看深度拆解">
     <div class="thumb">${mediaEl}
       ${dupBadge}
       ${revOf(m) !== 'todo' ? `<div class="rv-badge ${revOf(m)}">${revOf(m) === 'keep' ? '✅ 通过' : '❌ 淘汰'}</div>` : ''}
@@ -527,14 +497,12 @@ function renderMain() {
   else if (view === 'review') renderReview(list);
   else if (view === 'cats') renderCategoryView(list);
   else if (view === 'dups') renderDuplicates();
-  else renderKanban(list);
   renderAnalytics(list);
 }
 function renderDuplicates() {
   $('grid').classList.add('hidden');
   $('review').classList.add('hidden');
   $('cats').classList.add('hidden');
-  $('kanban').classList.add('hidden');
   $('dups').classList.remove('hidden');
   const box = $('dups');
   if (!DUP?.groups?.length) {
@@ -574,7 +542,6 @@ function renderDuplicates() {
     ${cards}`;
 }
 function renderGrid(list) {
-  $('kanban').classList.add('hidden');
   $('cats').classList.add('hidden');
   $('review').classList.add('hidden');
   $('dups').classList.add('hidden');
@@ -665,7 +632,6 @@ function categoryCardHTML(cat, mats) {
 
 function renderCategoryView(list) {
   $('grid').classList.add('hidden');
-  $('kanban').classList.add('hidden');
   $('review').classList.add('hidden');
   $('dups').classList.add('hidden');
   $('cats').classList.remove('hidden');
@@ -717,7 +683,6 @@ function setRevMode(v) {
 function renderReview(list) {
   reviewQueue = list;
   $('grid').classList.add('hidden');
-  $('kanban').classList.add('hidden');
   $('cats').classList.add('hidden');
   $('dups').classList.add('hidden');
   $('empty').classList.add('hidden');
@@ -1100,86 +1065,13 @@ function reviewOnlyTodo() {
   renderPanel();
 }
 
-// ---------------- 动态看板 ----------------
+// ---------------- 视图切换 ----------------
 function setView(v) {
   view = v;
   if (v === 'review') reviewIdx = 0;   // 进入审片模式从头开始
   document.querySelectorAll('.navitem[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === v));
-  $('boardBy').classList.toggle('hidden', v !== 'kanban');
-  $('wsViewLabel').textContent = { grid: '素材墙', review: '审片扫描', cats: '分类状态', kanban: '分类看板', dups: '重复排查' }[v] || '';
+  $('wsViewLabel').textContent = { grid: '素材墙', review: '审片扫描', cats: '分类状态', dups: '重复排查' }[v] || '';
   renderMain();
-}
-function setBoardBy(v) { boardBy = v; renderKanban(filtered()); }
-function kanbanCols() {
-  if (boardBy === 'grade') return [{ key: 'S' }, { key: 'A' }, { key: 'B' }, { key: 'C' }, { key: 'D' }].map(c => ({ ...c, label: c.key + ' 级', color: GCOLOR[c.key] }));
-  if (boardBy === 'channel') return [
-    { key: 'auto', label: '自动推荐', color: '#8b5cf6' },
-    { key: 'google', label: 'Google', color: '#0ea5e9' },
-    { key: 'meta', label: 'Meta', color: '#4f46e5' },
-    { key: 'tiktok', label: 'TikTok', color: '#10b981' }
-  ];
-  return MODEL.enums.hookType.map(ht => ({ key: ht, label: ht, color: '#6b7594' }));
-}
-function kanbanKeyOf(m) {
-  if (boardBy === 'grade') return effGrade(m);
-  if (boardBy === 'channel') return effChannel(m) ? effChannel(m) : 'auto';
-  return m.analysis.hook?.hookType || '无明确钩子';
-}
-function kCardHTML(m) {
-  const src = thumbOf(m);
-  const img = src ? `<img class="kthumb" src="${src}" alt="">` : `<div class="kthumb" style="display:flex;align-items:center;justify-content:center">🎬</div>`;
-  return `<div class="kcard" draggable="true" data-id="${m.id}"
-      ondragstart="onKDrag(event,'${m.id}')" ondragend="onKDragEnd(event)" onclick="openDrawer('${m.id}')">
-      ${img}
-      <div class="kmeta"><div class="kt">${esc(m.name)}</div>
-        <div class="ks">${fmt(m.analysis.composite)} 分 · ${m.analysis.hook?.hookType || ''}</div>
-        <div class="ks">${(m.analysis.tags?.advice || [])[0] ? esc((m.analysis.tags.advice)[0]) : ''}</div>
-      </div>
-      <span class="kbadge badge-${effGrade(m)}">${effGrade(m)}</span>
-    </div>`;
-}
-function renderKanban(list) {
-  $('grid').classList.add('hidden');
-  $('cats').classList.add('hidden');
-  $('review').classList.add('hidden');
-  $('dups').classList.add('hidden');
-  $('kanban').classList.remove('hidden');
-  const cols = kanbanCols();
-  $('kanban').innerHTML = cols.map(c => {
-    const items = list.filter(m => kanbanKeyOf(m) === c.key);
-    return `<div class="kcol" data-col="${esc(c.key)}" ondragover="onKDragOver(event)" ondragleave="this.classList.remove('dragover')" ondrop="onKDrop(event)">
-      <div class="kcol-head"><span class="dot" style="background:${c.color}"></span>${c.label}<small>${items.length}</small></div>
-      ${items.map(kCardHTML).join('') || '<div class="subtle" style="padding:8px 6px">拖拽卡片到此处分类</div>'}
-    </div>`;
-  }).join('');
-}
-function onKDrag(ev, id) { ev.dataTransfer.setData('text/plain', id); ev.currentTarget.classList.add('dragging'); }
-function onKDragEnd(ev) { ev.currentTarget.classList.remove('dragging'); }
-function onKDragOver(ev) { ev.preventDefault(); ev.currentTarget.classList.add('dragover'); ev.dataTransfer.dropEffect = 'move'; }
-async function onKDrop(ev) {
-  ev.preventDefault();
-  const col = ev.currentTarget;
-  col.classList.remove('dragover');
-  const id = ev.dataTransfer.getData('text/plain');
-  const colKey = col.dataset.col;
-  const m = MATERIALS.find(x => x.id === id);
-  if (!m) return;
-  let body = {};
-  if (boardBy === 'grade') {
-    if (colKey === effGrade(m)) return;
-    body.custom = { manualGrade: colKey };
-  } else if (boardBy === 'channel') {
-    const target = colKey === 'auto' ? null : colKey;
-    if (target === (m.custom?.manualChannel ?? null)) return;
-    body.custom = { manualChannel: target };
-  } else {
-    if (colKey === (m.analysis.hook?.hookType || '无明确钩子')) return;
-    body.analysis = { hook: { hookType: colKey } };
-  }
-  const upd = await fetch(`/api/materials/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
-  MATERIALS = MATERIALS.map(x => x.id === id ? upd : x);
-  render();
-  toast('已重新分类');
 }
 
 // ---------------- 详情工作室 ----------------
@@ -1810,7 +1702,6 @@ $('btnToggleFilter').onclick = () => {
 $('searchBox').oninput = e => { F.q = e.target.value; renderPanel(); renderMain(); };
 $('fMin').oninput = e => { F.minScore = Math.max(0, Math.min(100, +e.target.value || 0)); renderMain(); renderPanel(); };
 $('fMax').oninput = e => { F.maxScore = Math.max(0, Math.min(100, +e.target.value || 100)); renderMain(); renderPanel(); };
-$('fRiskOnly').onchange = e => { F.riskOnly = e.target.checked; renderPanel(); renderMain(); };
 $('fClear').onclick = clearFilters;
 $('sortBy').onchange = e => { sortBy = e.target.value; renderMain(); };
 document.addEventListener('keydown', e => {

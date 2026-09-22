@@ -218,17 +218,6 @@ body.filter-collapsed .maincol{width:100%}
 .fpanel::-webkit-scrollbar-thumb{background:transparent;border-width:0}
 .fpanel:hover::-webkit-scrollbar-thumb{background:var(--surface-3)}
 
-/* 品牌区 */
-.fp-brand{
-  display:flex;align-items:center;gap:10px;
-  padding:0 4px 14px;margin-bottom:10px;
-  border-bottom:1px solid var(--line-soft);
-}
-.fp-brand .logo{width:34px;height:34px;border-radius:var(--r-sm);font-size:12px}
-.fp-brand-text{min-width:0;line-height:1.25}
-.fp-brand-text b{display:block;font-size:var(--fs-sm);font-weight:700;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.fp-brand-text small{font-size:10px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-
 /* 导航分组 */
 .navsec{margin-bottom:var(--sp-4)}
 .navsec-title{
@@ -419,7 +408,6 @@ body.filter-collapsed .maincol{width:100%}
 .hitinfo{font-size:var(--fs-sm);color:var(--text-3);min-width:110px;white-space:nowrap}
 .hitinfo b{color:var(--text-1);font-variant-numeric:tabular-nums}
 .bar-right{display:flex;align-items:center;gap:var(--sp-2);margin-left:auto}
-.boardby{width:auto;min-width:150px;border:none;background:transparent;font-size:var(--fs-sm);color:var(--text-2)}
 
 .select{
   padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-sm);
@@ -1056,3 +1044,48 @@ textarea{resize:vertical;min-height:56px}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
 }
+
+/* ============ 交互完善（全局统一交互态） ============ */
+/* 键盘焦点环：指针操作无环，键盘导航显性可见 */
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn:focus-visible,.navitem:focus-visible,.fchip:focus-visible,.fp-scene:focus-visible,
+.acc-head:focus-visible,.filters-head:focus-visible,.nh-chip:focus-visible,.dup-member:focus-visible,
+.select:focus-visible,.kbd:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.card:focus-visible{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-glow),var(--shadow-md);
+  transform:translateY(-2px);
+}
+
+/* 按压反馈：物理按下感 */
+.card:active{transform:translateY(-1px) scale(.985)}
+.navitem:active{transform:translateY(0) scale(.97)}
+.fchip:active,.fp-scene:active,.acc-head:active,.filters-head:active{transform:scale(.97)}
+.btn:active{transform:translateY(0) scale(.98)}
+.btn:disabled{opacity:.45;pointer-events:none;transform:none}
+
+/* 视图切换淡入 */
+.ws-scroll > main:not(.hidden){animation:viewIn .22s var(--ease)}
+@keyframes viewIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* 抽屉遮罩淡入 */
+.drawer-backdrop{animation:fadeIn .18s ease}
+.modal-backdrop{animation:fadeIn .18s ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+
+/* 渠道判定 chip 悬停细节 */
+.vchip{transition:transform var(--dur) var(--ease),border-color var(--dur),filter var(--dur)}
+.vchip:hover{transform:translateY(-2px);filter:brightness(1.15)}
+
+/* 选择器悬停 */
+.select:hover{border-color:var(--accent)}
+
+/* 素材卡 hover 微光 + 打开提示 */
+.card::after{
+  content:'查看拆解';position:absolute;left:50%;top:10px;transform:translateX(-50%) translateY(-4px);
+  font-size:9px;font-weight:800;letter-spacing:.1em;color:#06281f;
+  background:var(--accent);padding:3px 10px;border-radius:var(--r-pill);
+  opacity:0;transition:opacity var(--dur) var(--ease),transform var(--dur) var(--ease);
+  z-index:4;pointer-events:none;
+}
+.card:hover::after,.card:focus-visible::after{opacity:1;transform:translateX(-50%) translateY(0)}

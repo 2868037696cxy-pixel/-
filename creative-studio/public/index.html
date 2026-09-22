@@ -54,15 +54,6 @@
   <div class="layout">
     <!-- 左侧导航中枢 + 情境筛选（可折叠） -->
     <aside class="fpanel" id="fpanel">
-      <!-- 品牌区 -->
-      <div class="fp-brand">
-        <div class="logo">JEV</div>
-        <div class="fp-brand-text">
-          <b>Creative Workbench</b>
-          <small>跨境电商素材 · AI 评分审片</small>
-        </div>
-      </div>
-
       <!-- 导航分组：工作台 -->
       <nav class="navsec">
         <div class="navsec-title">工作台</div>
@@ -75,28 +66,8 @@
         <a class="navitem" data-view="cats" href="javascript:void(0)" onclick="setView('cats')">
           <span class="nav-ico">▤</span><span class="nav-label">分类状态</span>
         </a>
-        <a class="navitem" data-view="kanban" href="javascript:void(0)" onclick="setView('kanban')">
-          <span class="nav-ico">▥</span><span class="nav-label">分类看板</span>
-        </a>
         <a class="navitem" data-view="dups" href="javascript:void(0)" onclick="setView('dups')">
           <span class="nav-ico">⧉</span><span class="nav-label">重复排查</span><em class="nav-cnt" id="navDups">0</em>
-        </a>
-      </nav>
-
-      <!-- 导航分组：工具 -->
-      <nav class="navsec">
-        <div class="navsec-title">工具</div>
-        <a class="navitem" href="javascript:void(0)" onclick="$('btnAdd').click()">
-          <span class="nav-ico">⇪</span><span class="nav-label">导入素材</span>
-        </a>
-        <a class="navitem ai" href="javascript:void(0)" onclick="$('btnAIAll').click()">
-          <span class="nav-ico">✦</span><span class="nav-label">AI 审核</span>
-        </a>
-        <a class="navitem" href="javascript:void(0)" onclick="$('btnModel').click()">
-          <span class="nav-ico">⚙</span><span class="nav-label">评分模型</span>
-        </a>
-        <a class="navitem" href="javascript:void(0)" onclick="$('btnExport').click()">
-          <span class="nav-ico">⇓</span><span class="nav-label">导出</span>
         </a>
       </nav>
 
@@ -180,43 +151,6 @@
               </button>
               <div class="acc-body"><div class="acc-body-inner"><div class="checks" id="fMedia"></div></div></div>
             </div>
-
-            <div class="acc closed">
-              <button class="acc-head" type="button" onclick="toggleAcc(this)">
-                <span class="acc-title">渠道可投</span><span class="acc-badge" id="gBadgeChannels"></span><span class="acc-arrow">▾</span>
-              </button>
-              <div class="acc-body"><div class="acc-body-inner"><div class="checks" id="fChannels"></div></div></div>
-            </div>
-
-            <div class="acc">
-              <button class="acc-head" type="button" onclick="toggleAcc(this)">
-                <span class="acc-title">仅看风险</span><span class="acc-badge" id="gBadgeRisk"></span><span class="acc-arrow">▾</span>
-              </button>
-              <div class="acc-body"><div class="acc-body-inner">
-                <label class="check-row"><input type="checkbox" id="fRiskOnly" style="width:auto"><span class="cr-label">只显示命中合规风险的素材</span></label>
-              </div></div>
-            </div>
-
-            <div class="acc closed">
-              <button class="acc-head" type="button" onclick="toggleAcc(this)">
-                <span class="acc-title">出镜类型</span><span class="acc-badge" id="gBadgeActors"></span><span class="acc-arrow">▾</span>
-              </button>
-              <div class="acc-body"><div class="acc-body-inner"><div class="checks" id="fActors"></div></div></div>
-            </div>
-
-            <div class="acc closed">
-              <button class="acc-head" type="button" onclick="toggleAcc(this)">
-                <span class="acc-title">Hook 类型</span><span class="acc-badge" id="gBadgeHooks"></span><span class="acc-arrow">▾</span>
-              </button>
-              <div class="acc-body"><div class="acc-body-inner"><div class="checks scroll" id="fHooks"></div></div></div>
-            </div>
-
-            <div class="acc closed">
-              <button class="acc-head" type="button" onclick="toggleAcc(this)">
-                <span class="acc-title">标签</span><span class="acc-badge" id="gBadgeTags"></span><span class="acc-arrow">▾</span>
-              </button>
-              <div class="acc-body"><div class="acc-body-inner"><div class="checks scroll tags" id="fTags"></div></div></div>
-            </div>
           </div>
           </div>
         </div>
@@ -238,11 +172,6 @@
         <button class="btn fpanel-toggle" id="btnToggleFilter" title="收起/展开侧边栏">☰</button>
         <div class="hitinfo">命中 <b id="hitCount">0</b> / <b id="totalCount">0</b></div>
         <div class="bar-right">
-          <select id="boardBy" class="select boardby hidden" onchange="setBoardBy(this.value)">
-            <option value="grade">按评级 S/A/B/C/D</option>
-            <option value="channel">按投放渠道</option>
-            <option value="hook">按 Hook 类型</option>
-          </select>
           <select id="sortBy" class="select">
             <option value="composite-desc">综合分 高→低</option>
             <option value="composite-asc">综合分 低→高</option>
@@ -263,7 +192,6 @@
             <main id="grid" class="grid"></main>
             <main id="review" class="review hidden"></main>
             <main id="cats" class="catsview hidden"></main>
-            <main id="kanban" class="kanban hidden"></main>
             <main id="dups" class="dupsview hidden"></main>
             <div id="empty" class="empty hidden">
               <div class="empty-icon">🔍</div>
