@@ -240,11 +240,20 @@ function renderPanel() {
     Cats: F.categories.size, Media: F.media.size, Channels: F.channels.size,
     Risk: F.riskOnly ? 1 : 0, Actors: F.actors.size, Hooks: F.hooks.size, Tags: F.tags.size
   };
+  let totalActive = 0;
   for (const [k, n] of Object.entries(badges)) {
     const el = $('gBadge' + k);
     if (el) { el.textContent = n; el.classList.toggle('show', n > 0); }
+    totalActive += n;
   }
+  const fBadge = $('filtersBadge');
+  if (fBadge) { fBadge.textContent = totalActive; fBadge.classList.toggle('show', totalActive > 0); }
   renderPresets();
+}
+
+// ---- 情境筛选区整体折叠 ----
+function toggleFilters() {
+  $('filters').classList.toggle('closed');
 }
 
 // ---- 场景快捷筛片：运营工作流一键入口 ----
@@ -308,6 +317,9 @@ function renderStats() {
   $('statTop').textContent = MATERIALS.filter(m => ['S', 'A'].includes(effGrade(m))).length;
   $('statRisk').textContent = MATERIALS.filter(m => policyRiskCount(m) > 0).length;
   $('statGo').textContent = MATERIALS.filter(m => ['google', 'meta', 'tiktok'].some(k => m.analysis.platforms?.[k]?.verdict === 'GO')).length;
+  // 侧边栏导航计数
+  $('navTotal').textContent = n;
+  $('navTodo').textContent = MATERIALS.filter(m => revOf(m) === 'todo').length;
 }
 function thumbOf(m) {
   if (m.kind === 'url' && /^(https?:)?\/\//.test(m.ref || '')) return m.ref;
@@ -894,7 +906,7 @@ function reviewOnlyTodo() {
 function setView(v) {
   view = v;
   if (v === 'review') reviewIdx = 0;   // 进入审片模式从头开始
-  document.querySelectorAll('.vtab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+  document.querySelectorAll('.navitem[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === v));
   $('boardBy').classList.toggle('hidden', v !== 'kanban');
   renderMain();
 }
