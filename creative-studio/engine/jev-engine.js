@@ -59,6 +59,52 @@ export const GRADE_BANDS = [
   { grade: 'D', min: 0,  label: '不合格', advice: '不建议投放' }
 ];
 
+// 平台判定阈值（适配分 → 裁定），默认 GO≥72 / COND≥58
+export const DEFAULT_VERDICT = { go: 72, cond: 58 };
+
+// 完整模型配置（权重 + 评级阈值 + 判定阈值），可整体存取
+export const DEFAULT_MODEL = {
+  weights: DEFAULT_WEIGHTS,
+  gradeBands: GRADE_BANDS.map(g => ({ ...g })),
+  verdict: { ...DEFAULT_VERDICT }
+};
+
+// 清洗/校验用户提交的模型配置
+export function sanitizeModel(m) {
+  const w = m?.weights || {};
+  const gb = Array.isArray(m?.gradeBands) ? m.gradeBands : null;
+  const vd = m?.verdict || {};
+  const model = {
+    weights: {
+      j: clamp10(w.j ?? DEFAULT_WEIGHTS.j),
+      e: clamp10(w.e ?? DEFAULT_WEIGHTS.e),
+      v: clamp10(w.v ?? DEFAULT_WEIGHTS.v),
+      platforms: {
+        meta:   sanWeights(w.platforms?.meta, DEFAULT_WEIGHTS.platforms.meta),
+        google: sanWeights(w.platforms?.google, DEFAULT_WEIGHTS.platforms.google),
+        tiktok: sanWeights(w.platforms?.tiktok, DEFAULT_WEIGHTS.platforms.tiktok)
+      }
+    },
+    gradeBands: GRADE_BANDS.map((g, i) => {
+      if (!gb || !gb[i] || !Number.isFinite(+gb[i].min)) return { ...g };
+      const min = Math.max(0, Math.min(100, Math.round(+gb[i].min * 100) / 100));
+      return { ...g, min };
+    }).sort((a, b) => b.min - a.min),
+    verdict: {
+      go: clamp100(vd.go ?? DEFAULT_VERDICT.go),
+      cond: clamp100(vd.cond ?? DEFAULT_VERDICT.cond)
+    }
+  };
+  return model;
+}
+const sanWeights = (o, def) => {
+  const r = {};
+  for (const k of Object.keys(def)) r[k] = clamp10(o?.[k] ?? def[k]);
+  return r;
+};
+const clamp10 = x => Math.max(0, Math.min(10, Number(x) || 0));
+const clamp100 = x => Math.max(0, Math.min(100, Number(x) || 0));
+
 // ---------------------- 核心计算 ----------------------
 // J/E/V 单项(1-10) → 综合分(0-100)
 export function computeComposite(hookScore, engScore, valScore, weights = DEFAULT_WEIGHTS) {
