@@ -335,9 +335,10 @@ body.filter-collapsed .maincol{width:100%}
 .acc-badge.show{display:inline-block}
 .acc-arrow{color:var(--text-3);font-size:10px;transition:transform var(--dur) var(--ease);flex-shrink:0}
 .acc.closed .acc-arrow{transform:rotate(-90deg)}
-.acc-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows .3s var(--ease)}
+.acc-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows .25s var(--ease)}
 .acc.closed .acc-body{grid-template-rows:0fr}
 .acc-body-inner{overflow:hidden;min-height:0;padding:2px 12px 12px}
+.acc.closed .acc-body-inner{padding:0}
 
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .fchip{
