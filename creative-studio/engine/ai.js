@@ -18,6 +18,17 @@ export function aiAvailable() {
 export function buildStateText(material) {
   const parts = [];
   parts.push(`素材名称: ${material?.name || '未命名'}`);
+  const b = material?.basic || {};
+  if (b.mediaType) {
+    const ar = Number(b.aspect) || 0;
+    const orient = !ar ? '' : ar >= 1.2 ? '横版' : ar <= 0.83 ? '竖版' : '近方形';
+    const form = b.mediaType === 'video'
+      ? `视频（约${Math.round(b.durationSec || 0)}秒${b.hasAudio ? '，有声音' : '，无声'}）`
+      : '静态图片';
+    const dim = b.width && b.height ? `，分辨率 ${b.width}x${b.height}` : '';
+    parts.push(`素材形态: ${form}${orient ? '，' + orient : ''}${dim}`);
+  }
+  parts.push('投放平台: 仅投放 Facebook/Meta Ads 与 Google Ads 两个渠道');
   const s = material?.subtitles || [];
   if (s.length) parts.push(`视频字幕/文案: ${s.map(x => x.text).join(' ')}`);
   const an = material?.analysis || {};
@@ -130,6 +141,44 @@ export async function analyzeWithTypeSafe(material) {
       type: 'noul',
       instructions: '素材是否存在成人、暴力、政治、赌博、仿冒侵权等其他政策违规风险？',
       criteria: { true: '存在其他明显政策违规', false: '无明显违规' }
+    },
+    fb_fit: {
+      type: 'score',
+      instructions: '评估该素材对 Facebook/Meta Ads（信息流/Reels/Stories，移动端刷屏场景）的投放适配度：竖版/方形优先、前3秒强Hook、原生UGC感、移动端可读性与节奏。',
+      criteria: [
+        '不适配信息流节奏：横屏冗长或信息密度低，易被划走',
+        '基本适配，但移动端吸引力或原生感一般',
+        '高度适配 Meta：竖版/方形优先，前3秒强Hook，原生感强，移动端体验佳'
+      ]
+    },
+    google_fit: {
+      type: 'score',
+      instructions: '评估该素材对 Google Ads（YouTube 内流/Shorts、Demand Gen、展示广告）的投放适配度：卖点信息清晰直接、表达可信专业、品牌感、可跨版式复用。',
+      criteria: [
+        '不适配：信息混乱或过度标题党，缺乏可信度',
+        '基本适配，信息可读但亮点与可信度一般',
+        '高度适配 Google：卖点清晰秒懂、表达可信专业，适配多版式投放'
+      ]
+    },
+    fb_policy: {
+      type: 'noul',
+      instructions: '按 Meta 广告政策判断风险：是否包含减肥/健康类 Before-After 前后对比、针对个人身体属性的断言（如"你太胖了"）、负面自我认知暗示或夸大健康功效？Meta 对此类内容限制极严，易拒登甚至封户。',
+      criteria: { true: '存在 Meta 政策受限内容', false: '无 Meta 政策风险' }
+    },
+    google_policy: {
+      type: 'noul',
+      instructions: '按 Google Ads 政策判断风险：是否包含不可能实现或误导性编辑的前后对比演示、夸大健康医疗声明、点击诱饵式标题？Google 对健康类与误导性演示审核严格。',
+      criteria: { true: '存在 Google 政策受限内容', false: '无 Google 政策风险' }
+    },
+    best_platform: {
+      type: 'choice',
+      instructions: '综合素材风格与两个投放平台（Meta / Google）的特性，判断它更适合投到哪。',
+      criteria: {
+        fb: '更适合 Meta：情绪化、UGC原生、强Hook，适合信息流/Reels',
+        google: '更适合 Google：信息清晰、可信专业，适合 YouTube/展示',
+        both: '双平台通用',
+        neither: '两平台均不适合'
+      }
     }
   };
 
@@ -163,6 +212,7 @@ export async function analyzeWithTypeSafe(material) {
   };
   const ACTOR_MAP = { western: '欧美真人', asian: '亚洲真人', none: '无真人', cg: '3D动画', ai: 'AI合成' };
   const SCENE_MAP = { indoor: '室内', outdoor: '户外', studio: '工作室', street: '街头', product: '纯产品展示' };
+  const BEST_MAP = { fb: 'Meta(FB/IG)', google: 'Google Ads', both: '双平台通用', neither: '两平台均不宜' };
 
   const noul = (id, threshold = 0.55) => (pick(id) == null ? null : pick(id) > threshold);
 
@@ -193,20 +243,63 @@ export async function analyzeWithTypeSafe(material) {
     }
   };
 
-  // AI 审核建议：任一违规 → 淘汰；三维强势 → 通过；否则 → 人工复核
+  // 双平台（Meta / Google）评测：适配度 + 平台专属政策红线 + 平台级判定
+  const fbFit = scoreTo10(pick('fb_fit'), 3);
+  const googleFit = scoreTo10(pick('google_fit'), 3);
+  const riskFb = noul('fb_policy');
+  const riskGoogle = noul('google_policy');
+  result.policy.riskFb = riskFb;
+  result.policy.riskGoogle = riskGoogle;
+  const pfVerdict = (fit, risk) => {
+    if (risk === true) return 'reject';
+    if (fit == null) return 'review';
+    return fit >= 6.5 ? 'pass' : fit >= 4 ? 'review' : 'reject';
+  };
+  result.platform = {
+    fbFit,
+    googleFit,
+    best: BEST_MAP[pick('best_platform')] || null,
+    fbVerdict: pfVerdict(fbFit, riskFb),
+    googleVerdict: pfVerdict(googleFit, riskGoogle)
+  };
+
+  // AI 审核建议：通用违规或双平台政策均受限 → 淘汰；单平台受限 → 按另一平台表现保留/复核；否则按三维均值
   const risks = [result.policy.riskHealth, result.policy.riskMislead, result.policy.riskPolicy];
-  const hasRisk = risks.some(Boolean);
-  const avg = (result.hook.score + result.engagement.score + result.value.score) / 3;
-  if (hasRisk) result.recommendation = 'reject';
-  else if (avg >= 7) result.recommendation = 'keep';
-  else if (avg >= 4.5) result.recommendation = 'review';
-  else result.recommendation = 'reject';
-  result.recommendReason = hasRisk
-    ? '检测到合规风险项（医疗夸大/虚假承诺/政策违规）'
-    : result.recommendation === 'keep'
-      ? 'J/E/V 三维均强势，质量达标'
-      : result.recommendation === 'review'
-        ? '三维中等，建议人工复核关键短板'
-        : '三维偏弱，建议淘汰或重构';
+  const genRisk = risks.some(Boolean);
+  const bothPfRisk = riskFb === true && riskGoogle === true;
+  const onlyFb = riskFb === true && riskGoogle !== true;
+  const onlyGg = riskGoogle === true && riskFb !== true;
+  const avg = ((result.hook.score || 0) + (result.engagement.score || 0) + (result.value.score || 0)) / 3;
+  const altFit = onlyFb ? googleFit : fbFit;
+  const altPass = onlyFb ? result.platform.googleVerdict === 'pass' : result.platform.fbVerdict === 'pass';
+
+  if (genRisk || bothPfRisk) {
+    result.recommendation = 'reject';
+    result.recommendReason = genRisk
+      ? '检测到合规风险项（医疗夸大/虚假承诺/政策违规）'
+      : 'Meta 与 Google 双平台政策均受限，建议淘汰';
+  } else if (onlyFb || onlyGg) {
+    const alt = onlyFb ? 'Google Ads' : 'Meta(FB/IG)';
+    const blocked = onlyFb ? 'Meta' : 'Google';
+    if (altPass && avg >= 5.5) {
+      result.recommendation = 'keep';
+      result.recommendReason = `${blocked} 政策受限，仅建议投 ${alt}（适配 ${altFit ?? '?'}/10）`;
+    } else {
+      result.recommendation = 'review';
+      result.recommendReason = `${blocked} 政策受限，${alt} 适配一般，需人工确认单平台投放`;
+    }
+  } else if (avg >= 7) {
+    result.recommendation = 'keep';
+    const minFit = Math.min(fbFit ?? 10, googleFit ?? 10);
+    result.recommendReason = minFit >= 5
+      ? `J/E/V 三维均强势，双平台适配良好，更宜投 ${result.platform.best || '双平台'}`
+      : 'J/E/V 三维均强势，质量达标';
+  } else if (avg >= 4.5) {
+    result.recommendation = 'review';
+    result.recommendReason = '三维中等，建议人工复核关键短板';
+  } else {
+    result.recommendation = 'reject';
+    result.recommendReason = '三维偏弱，建议淘汰或重构';
+  }
   return result;
 }

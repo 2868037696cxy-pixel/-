@@ -114,7 +114,7 @@ function refresh(m) {
     aiProvider: m.analysis.aiProvider
   } : null;
   m.analysis = recomputeAnalysis(
-    { hook, engagement, value, policy: { score: 9, risks } },
+    { ...m.analysis, hook, engagement, value, policy: { score: 9, risks } },
     m.basic, model
   );
   if (prevAI) Object.assign(m.analysis, prevAI);
@@ -359,6 +359,9 @@ async function applyAIResult(m, result) {
   m.analysis.aiAssessed = true;
   m.analysis.aiProvider = result.provider || 'typesafe';
 
+  // 双平台投放适配结果（Meta / Google）
+  if (result.platform) m.analysis.platform = result.platform;
+
   // 合规风险：Noul 判定 → riskState 勾选（critical 类）
   const riskState = m.custom.riskState || {};
   const RULES = { riskHealth: 'health', riskMislead: 'mislead', riskPolicy: 'adult' };
@@ -397,6 +400,8 @@ function localAIResult(m) {
   if (hasRisk) { recommendation = 'reject'; reason = '检测到合规风险项（critical 一票否决）'; }
   else if (avg >= 7) { recommendation = 'keep'; reason = 'J/E/V 三维均强势，质量达标'; }
   else if (avg < 4.5) { recommendation = 'reject'; reason = '三维偏弱，建议淘汰或重构'; }
+  const fbFit = Math.round(Math.min(10, avg) * 10) / 10;
+  const pfVerdict = f => (f >= 6.5 ? 'pass' : f >= 4 ? 'review' : 'reject');
   return {
     provider: 'local',
     recommendation,
@@ -404,6 +409,13 @@ function localAIResult(m) {
     hook: { score: a.hook?.score },
     engagement: { score: a.engagement?.score },
     value: { score: a.value?.score },
+    platform: {
+      fbFit,
+      googleFit: fbFit,
+      best: fbFit >= 4.5 ? '双平台通用' : '两平台均不宜',
+      fbVerdict: pfVerdict(fbFit),
+      googleVerdict: pfVerdict(fbFit)
+    },
     policy: {}
   };
 }

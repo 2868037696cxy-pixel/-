@@ -1,7 +1,7 @@
 // ============================================================================
 // JEV 核心评分引擎 (Jaw-dropping Hook / Engagement & Empathy / Value & Conversion)
 // 跨境广告素材黄金三维评测：单项 1-10 分 → 平台适配 0-100 → 综合评级 S/A/B/C/D
-// 参考 Meta Creative Insights / Google Ads Policy / TikTok 原生创意标准
+// 参考 Meta Creative Insights / Google Ads Policy 创意标准（仅投 FB + Google Ads）
 // ============================================================================
 
 // ---------------------- 模型权重（可在线调整） ----------------------
@@ -12,8 +12,7 @@ export const DEFAULT_WEIGHTS = {
   // 各渠道适配权重（狗覆写）
   platforms: {
     meta:   { hook: 0.30, engagement: 0.35, value: 0.20, policy: 0.15 },
-    google: { hook: 0.20, engagement: 0.30, value: 0.30, policy: 0.20 },
-    tiktok: { hook: 0.40, engagement: 0.22, value: 0.13, policy: 0.10, native: 0.15 }
+    google: { hook: 0.20, engagement: 0.30, value: 0.30, policy: 0.20 }
   }
 };
 
@@ -81,8 +80,7 @@ export function sanitizeModel(m) {
       v: clampW(w.v ?? DEFAULT_WEIGHTS.v),
       platforms: {
         meta:   sanWeights(w.platforms?.meta, DEFAULT_WEIGHTS.platforms.meta),
-        google: sanWeights(w.platforms?.google, DEFAULT_WEIGHTS.platforms.google),
-        tiktok: sanWeights(w.platforms?.tiktok, DEFAULT_WEIGHTS.platforms.tiktok)
+        google: sanWeights(w.platforms?.google, DEFAULT_WEIGHTS.platforms.google)
       }
     },
     gradeBands: GRADE_BANDS.map((g, i) => {
@@ -123,13 +121,12 @@ function clamp10(x) { return Math.max(1, Math.min(10, Number(x) || 1)); }
 
 // ---------------------- 平台适配度 ----------------------
 // 输入: analysis(含 hook/engagement/value/policy), basic, weights, verdict(阈值)
-// 输出: { meta:{fit,verdict,reasons}, google:{...}, tiktok:{...} }
+// 输出: { meta:{fit,verdict,reasons}, google:{...} }
 export function evaluatePlatforms(analysis, basic, weights = DEFAULT_WEIGHTS, verdict = DEFAULT_VERDICT) {
   const h = analysis.hook || {}, e = analysis.engagement || {}, v = analysis.value || {};
   const p = analysis.policy || {};
   const j = clamp10(h.score), E = clamp10(e.score), V = clamp10(v.score);
   const P = clamp10(p.score ?? 9);                  // 政策安全分
-  const nativeBonus = nativeScore(analysis);        // 原生感 0-10
 
   const critical = (p.risks || []).filter(r => r.level === 'critical');
   const warning  = (p.risks || []).filter(r => r.level === 'warning');
@@ -146,14 +143,6 @@ export function evaluatePlatforms(analysis, basic, weights = DEFAULT_WEIGHTS, ve
          + V*(weights.platforms.google.value||0) + P*(weights.platforms.google.policy||0),
       wsum: (weights.platforms.google.hook||0)+(weights.platforms.google.engagement||0)
           + (weights.platforms.google.value||0)+(weights.platforms.google.policy||0)
-    },
-    tiktok: {
-      raw: j*(weights.platforms.tiktok.hook||0)    + E*(weights.platforms.tiktok.engagement||0)
-         + V*(weights.platforms.tiktok.value||0)   + P*(weights.platforms.tiktok.policy||0)
-         + nativeBonus*(weights.platforms.tiktok.native||0),
-      wsum: (weights.platforms.tiktok.hook||0)+(weights.platforms.tiktok.engagement||0)
-          + (weights.platforms.tiktok.value||0)+(weights.platforms.tiktok.policy||0)
-          + (weights.platforms.tiktok.native||0)
     }
   };
 
@@ -165,18 +154,14 @@ export function evaluatePlatforms(analysis, basic, weights = DEFAULT_WEIGHTS, ve
     // —— 画幅/规格加成 ——
     const reasons = [];
     const aspect = basic?.aspect, dur = basic?.durationSec;
-    if (key === 'meta' || key === 'tiktok') {
-      if (aspect === '9:16') { fit += 5; reasons.push(key === 'tiktok' ? '竖屏原生形态，Feed/Reels 友好' : '9:16 竖屏符合 Feed/Reels'); }
+    if (key === 'meta') {
+      if (aspect === '9:16') { fit += 5; reasons.push('9:16 竖屏符合 Feed/Reels'); }
       else if (aspect === '1:1') { fit += 2; }
     }
     if (key === 'google') {
       if (aspect === '1:1' || aspect === '16:9') { fit += 4; reasons.push(aspect === '16:9' ? '16:9 适合 YouTube' : '1:1 兼容 PMax 多画幅'); }
       if (basic?.resolution === 'FHD' || basic?.resolution === '4K') { fit += 3; reasons.push('高画质利于 YouTube/PMax'); }
       if (basic?.mediaType === 'video' && dur && dur < 6) { fit -= 3; reasons.push('视频过短，YouTube 完整观看易低'); }
-    }
-    if (key === 'tiktok') {
-      if (dur && dur <= 60 && basic?.mediaType === 'video') { fit += 2; reasons.push('时长符合 TikTok 短平快节奏'); }
-      if (nativeBonus >= 8) reasons.push('原生感强，无硬广痕迹');
     }
     if (key === 'meta' && e.trust?.includes('UGC真人出镜')) { fit += 3; reasons.push('UGC 真人出镜，社交信任感强'); }
 
@@ -199,20 +184,6 @@ export function evaluatePlatforms(analysis, basic, weights = DEFAULT_WEIGHTS, ve
     out[key] = { fit, verdict: vFinal, reasons };
   }
   return out;
-}
-
-// 原生感 0-10：UGC/真人/口语化/无硬广感
-function nativeScore(analysis) {
-  const e = analysis.engagement || {};
-  let s = 5;
-  if (e.actor === '欧美真人' || e.actor === '亚洲真人') s += 2.5;
-  else if (e.actor === '3D动画') s += 0.5;
-  else if (e.actor === '无真人') s -= 1.5;
-  if (e.trust?.includes('UGC真人出镜')) s += 1.5;
-  if (e.scene === '室内' || e.scene === '街头') s += 0.5;
-  const v = analysis.value || {};
-  if (v.offer && v.offer !== '无促销') s -= 1;   // 促销词削弱原生感
-  return Math.max(0, Math.min(10, s));
 }
 
 // ---------------------- 合规扫描 ----------------------
@@ -287,7 +258,7 @@ export function heuristicBaseline(basic) {
       ctaScore: 6, ctaText: ''
     },
     policy: { score: 9, risks: [] },
-    platforms: { meta: {}, google: {}, tiktok: {} },
+    platforms: { meta: {}, google: {} },
     composite: 0, grade: 'C', gradeInfo: { label: '待优化', advice: '' },
     tags: { basic: [], content: [], strategy: [], advice: [] },
     aiAssessed: false

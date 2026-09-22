@@ -18,7 +18,7 @@ const F = {
   categories: new Set(),// 品类
   review: new Set(),    // 审片状态 todo/keep/reject
   media: new Set(),     // video/image
-  channels: new Set(),  // google/meta/tiktok（可投=GO）
+  channels: new Set(),  // google/meta（可投=GO）
   actors: new Set(),
   hooks: new Set(),
   tags: new Set(),
@@ -27,8 +27,8 @@ const F = {
 };
 
 const GCOLOR = { S: '#10b981', A: '#22c55e', B: '#0ea5e9', C: '#f59e0b', D: '#ef4444' };
-const CH_ICON = { google: 'G', meta: 'M', tiktok: 'T' };
-const CH_NAME = { google: 'Google', meta: 'Meta', tiktok: 'TikTok' };
+const CH_ICON = { google: 'G', meta: 'M' };
+const CH_NAME = { google: 'Google', meta: 'Meta' };
 
 // ---------------- 客户端镜像计算（实时预览用） ----------------
 // 兼容新旧模型结构：新结构 MODEL.model = {weights, gradeBands, verdict}
@@ -82,8 +82,7 @@ function clPlatforms(m, risks) {
   };
   const g = mk({ hook: w.google.hook, engagement: w.google.engagement, value: w.google.value, policy: w.google.policy });
   const meta = mk({ hook: w.meta.hook, engagement: w.meta.engagement, value: w.meta.value, policy: w.meta.policy, native: 0.34 });
-  const tiktok = mk({ hook: w.tiktok.hook, engagement: w.tiktok.engagement, value: w.tiktok.value, policy: w.tiktok.policy, native: w.tiktok.native });
-  return { google: g, meta, tiktok };
+  return { google: g, meta };
 }
 
 // ---------------- 数据 ----------------
@@ -114,7 +113,7 @@ const effChannel = m => m.custom?.manualChannel || bestChannel(m);
 function bestChannel(m) {
   const ps = m.analysis.platforms || {};
   let best = null, bf = -1;
-  for (const k of ['google', 'meta', 'tiktok']) {
+  for (const k of ['google', 'meta']) {
     const p = ps[k];
     if (!p) continue;
     const s = p.verdict === 'GO' ? p.fit + 30 : p.verdict === 'COND' ? p.fit : p.fit - 30;
@@ -247,14 +246,14 @@ function presetActive(id) {
   if (!otherEmpty() || F.riskOnly) return false;
   if (id === 'todo') return F.review.size === 1 && F.review.has('todo');
   if (id === 'top') return F.grades.size === 2 && F.grades.has('S') && F.grades.has('A');
-  if (id === 'goable') return F.channels.size === 3;
+  if (id === 'goable') return F.channels.size === 2;
   return false;
 }
 function renderPresets() {
   $('psTodo').textContent = MATERIALS.filter(m => revOf(m) === 'todo').length;
   $('psRisk').textContent = MATERIALS.filter(policyRiskCount).length;
   $('psTop').textContent = MATERIALS.filter(m => ['S', 'A'].includes(effGrade(m))).length;
-  $('psGo').textContent = MATERIALS.filter(m => ['google', 'meta', 'tiktok'].every(k => m.analysis.platforms?.[k]?.verdict === 'GO')).length;
+  $('psGo').textContent = MATERIALS.filter(m => ['google', 'meta'].every(k => m.analysis.platforms?.[k]?.verdict === 'GO')).length;
   document.querySelectorAll('.fp-scene').forEach(el => el.classList.toggle('on', presetActive(el.dataset.preset)));
 }
 function applyPreset(id) {
@@ -264,7 +263,7 @@ function applyPreset(id) {
   if (id === 'todo') F.review.add('todo');
   else if (id === 'risk') F.riskOnly = true;
   else if (id === 'top') { F.grades.add('S'); F.grades.add('A'); }
-  else if (id === 'goable') { F.channels.add('google'); F.channels.add('meta'); F.channels.add('tiktok'); }
+  else if (id === 'goable') { F.channels.add('google'); F.channels.add('meta'); }
   renderPanel(); renderStats(); renderMain();
 }
 
@@ -362,7 +361,7 @@ function renderTeardown(m) {
         <div class="td-sub">${b.mediaType === 'video' ? '🎬 视频' : '🖼️ 单图'} · ${b.aspect || '?'}${b.durationSec ? ' · ' + b.durationSec + 's' : ''} · ${b.resolution || '?'}</div>
         ${dupOfId[m.id] ? `<div class="td-sub" style="color:var(--warn)">⧉ 重复变体 ×${dupOfId[m.id].count}（${esc(dupOfId[m.id].base)}）${dupOfId[m.id].isBest ? ' · 组内最优' : ' · 建议精简'}</div>` : ''}
         <div class="td-score" style="background:${GCOLOR[effGrade(m)]}"><b>${fmt(a.composite)}</b><span>JEV</span></div>
-        <div class="td-verdict">${['google', 'meta', 'tiktok'].map(k => { const p = a.platforms?.[k]; return p ? `<span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}"><i>${CH_ICON[k]}</i>${p.verdict}</span>` : ''; }).join('')}</div>
+        <div class="td-verdict">${['google', 'meta'].map(k => { const p = a.platforms?.[k]; return p ? `<span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}"><i>${CH_ICON[k]}</i>${p.verdict}</span>` : ''; }).join('')}</div>
         <button class="td-cta">${esc(a.value?.ctaText || '立即购买')}</button>
       </div>
     </div>
@@ -428,7 +427,7 @@ function renderStats() {
   $('statAvg').textContent = n ? fmt(MATERIALS.reduce((a, m) => a + m.analysis.composite, 0) / n) : '--';
   $('statTop').textContent = MATERIALS.filter(m => ['S', 'A'].includes(effGrade(m))).length;
   $('statRisk').textContent = MATERIALS.filter(m => policyRiskCount(m) > 0).length;
-  $('statGo').textContent = MATERIALS.filter(m => ['google', 'meta', 'tiktok'].some(k => m.analysis.platforms?.[k]?.verdict === 'GO')).length;
+  $('statGo').textContent = MATERIALS.filter(m => ['google', 'meta'].some(k => m.analysis.platforms?.[k]?.verdict === 'GO')).length;
   // 侧边栏导航计数
   $('navTotal').textContent = n;
   $('navTodo').textContent = MATERIALS.filter(m => revOf(m) === 'todo').length;
@@ -446,7 +445,7 @@ function cardHTML(m) {
   const src = thumbOf(m);
   const g = effGrade(m);
   const a = m.analysis;
-  const plats = ['google', 'meta', 'tiktok'].map(k => a.platforms?.[k]).filter(Boolean);
+  const plats = ['google', 'meta'].map(k => a.platforms?.[k]).filter(Boolean);
   const tagList = [...(a.tags?.advice || []).slice(0, 1), ...(a.tags?.strategy || []).slice(0, 2), ...(a.tags?.content || []).slice(0, 2)];
   const mediaEl = !src ? `<div style="height:100%;display:flex;align-items:center;justify-content:center;font-size:44px">🗂️</div>`
     : m.basic.mediaType === 'video'
@@ -475,7 +474,7 @@ function cardHTML(m) {
         <i class="e"><div class="jb e" style="width:${(a.engagement?.score || 0) * 10}%"></div></i>
         <i class="v"><div class="jb v" style="width:${(a.value?.score || 0) * 10}%"></div></i>
       </div>
-      <div class="verdicts">${plats.map((p, i) => vChip(p, ['google', 'meta', 'tiktok'][i])).join('')}</div>
+      <div class="verdicts">${plats.map((p, i) => vChip(p, ['google', 'meta'][i])).join('')}</div>
       <div class="tags">${tagList.map(t => `<span class="tag ${/风险|违禁/.test(t) ? 'risk' : /建议/.test(t) ? 'advice' : ''}">${esc(t)}</span>`).join('')}</div>
       <div class="card-foot">
         <span>${m.basic.mediaType === 'video' ? '🎬 视频' : '🖼️ 单图'}${a.engagement?.actor ? ' · ' + esc(a.engagement.actor) : ''}</span>
@@ -562,7 +561,7 @@ function statusOf(m) {
   if (risks.some(r => r.level === 'critical')) return 'no';
   const ps = m.analysis.platforms || {};
   let hasCond = false;
-  for (const k of ['google', 'meta', 'tiktok']) {
+  for (const k of ['google', 'meta']) {
     const v = ps[k]?.verdict;
     if (v === 'GO') return 'go';
     if (v === 'COND') hasCond = true;
@@ -583,7 +582,7 @@ function overviewChartsHTML(list) {
     </div>`).join('');
 
   // 渠道判定分布（每渠道 GO/COND/NO 三段）
-  const chanRows = ['google', 'meta', 'tiktok'].map(k => {
+  const chanRows = ['google', 'meta'].map(k => {
     const c = { GO: 0, COND: 0, NO: 0 };
     for (const m of list) c[m.analysis.platforms?.[k]?.verdict || 'NO']++;
     const total = Math.max(1, c.GO + c.COND + c.NO);
@@ -747,7 +746,7 @@ function frameHTML(m, i, total) {
     <div class="rv-frame-body">${media}</div>
     <div class="rv-frame-foot">
       <span class="score-badge ${effGrade(m)}"><b>${fmt(m.analysis.composite)}</b><span>分</span></span>
-      <div class="verdicts">${['google', 'meta', 'tiktok'].map(k => {
+      <div class="verdicts">${['google', 'meta'].map(k => {
         const p = m.analysis.platforms?.[k];
         return `<span class="vchip ${p?.verdict === 'GO' ? 'g' : p?.verdict === 'COND' ? 'y' : 'r'}"><i>${CH_ICON[k]}</i>${fmt(p?.fit || 0)}</span>`;
       }).join('')}</div>
@@ -760,13 +759,25 @@ function reviewSideHTML(m) {
     <div style="flex:1;height:6px;background:#eef1f8;border-radius:3px"><div style="width:${val * 10}%;height:100%;background:${color};border-radius:3px"></div></div>
     <span class="val">${val}</span></div>`;
   const aiBox = m.analysis.aiAssessed
-    ? `<div class="section ai-advice ${m.analysis.aiRecommendation || 'review'}">
+    ? (() => {
+        const pf = m.analysis.platform;
+        const pvTxt = v => (v === 'pass' ? '可投' : v === 'reject' ? '受限' : '复核');
+        const pv = pf
+          ? `<div class="plat-verdicts">
+              <span class="pv ${pf.fbVerdict || 'review'}"><b>Meta</b> 适配 ${pf.fbFit ?? '-'}/10 · ${pvTxt(pf.fbVerdict)}</span>
+              <span class="pv ${pf.googleVerdict || 'review'}"><b>Google</b> 适配 ${pf.googleFit ?? '-'}/10 · ${pvTxt(pf.googleVerdict)}</span>
+              ${pf.best ? `<span class="pv best">更宜投 ${esc(pf.best)}</span>` : ''}
+            </div>`
+          : '';
+        return `<div class="section ai-advice ${m.analysis.aiRecommendation || 'review'}">
         <h3>✦ TypeSafe 审核建议</h3>
         <div class="ai-advice-main">
           <span class="ai-advice-tag ${m.analysis.aiRecommendation || 'review'}">${m.analysis.aiRecommendation === 'keep' ? '✅ 建议通过' : m.analysis.aiRecommendation === 'reject' ? '❌ 建议淘汰' : '🔍 建议人工复核'}</span>
           <p class="subtle">${esc(m.analysis.aiRecommendReason || '')}</p>
         </div>
-      </div>`
+        ${pv}
+      </div>`;
+      })()
     : `<div class="section"><h3>✦ TypeSafe AI</h3><p class="subtle">未评测 — 点击详情或顶栏「AI 审核」对本素材调用 Jev 模型。</p></div>`;
   return `
     ${aiBox}
@@ -1098,7 +1109,7 @@ function renderDrawer() {
       ? `<video src="${m.ref}" poster="${b.poster || ''}" controls id="dvideo" style="width:100%"></video>`
       : `<img src="${src}" style="max-width:100%">`;
 
-  const statusChips = ['google', 'meta', 'tiktok'].map(k => {
+  const statusChips = ['google', 'meta'].map(k => {
     const p = a.platforms?.[k];
     if (!p) return '';
     return `<span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}"><i>${CH_ICON[k]}</i>${CH_NAME[k]} ${fmt(p.fit)}</span>`;
@@ -1255,8 +1266,7 @@ function radarHTML(m) {
     'E': (a.engagement?.score || 0) / 10,
     'V': (a.value?.score || 0) / 10,
     'Google': (a.platforms?.google?.fit || 0) / 100,
-    'Meta': (a.platforms?.meta?.fit || 0) / 100,
-    'TikTok': (a.platforms?.tiktok?.fit || 0) / 100
+    'Meta': (a.platforms?.meta?.fit || 0) / 100
   };
   const keys = Object.keys(vals), N = keys.length;
   const C = 120, R = 95;
@@ -1285,7 +1295,7 @@ function verdictZoneHTML(m) {
   const vb = (title, p) => `<div class="verdict-box vb-${p.verdict}">
     <h4><span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}"><i>${title[0]}</i>${title}</span> → <b>${p.verdict === 'GO' ? '可投放' : p.verdict === 'COND' ? '需优化后投放' : '不可投放'}</b> <span class="vchip fit">适配 ${fmt(p.fit)}</span></h4>
     <ul>${(p.reasons || ['—']).map(r => `<li>${esc(r)}</li>`).join('')}</ul></div>`;
-  return vb('Google', a.platforms?.google || {}) + vb('Meta', a.platforms?.meta || {}) + vb('TikTok', a.platforms?.tiktok || {});
+  return vb('Google', a.platforms?.google || {}) + vb('Meta', a.platforms?.meta || {});
 }
 function seekVideo(sec) {
   const v = $('dvideo');
@@ -1409,7 +1419,7 @@ async function delMaterial(id) {
 function csvHead() {
   return ['素材ID', '名称', '类型', '画幅', '时长s', '分辨率', '综合分', '评级', '人工评级',
     'J分', 'E分', 'V分', 'Hook类型', '出镜', '语言', '场景', '痛点', '促销', 'CTA分', '合规分',
-    'Google适配', 'Google判定', 'Meta适配', 'Meta判定', 'TikTok适配', 'TikTok判定',
+    'Google适配', 'Google判定', 'Meta适配', 'Meta判定',
     '风险项', '标签', '推荐策略', '备注', 'CTR', 'CVR', 'ROAS', '展示'];
 }
 function csvRow(m) {
@@ -1428,7 +1438,6 @@ function csvRow(m) {
     a.value?.ctaScore, a.policy?.score,
     a.platforms?.google?.fit, a.platforms?.google?.verdict,
     a.platforms?.meta?.fit, a.platforms?.meta?.verdict,
-    a.platforms?.tiktok?.fit, a.platforms?.tiktok?.verdict,
     (a.policy?.risks || []).map(r => r.label).join('；'),
     flatTags(m).join('；'),
     (a.tags?.advice || []).join('；'),
@@ -1550,7 +1559,6 @@ function openModel() {
 
     ${pw('meta', '② Meta (FB/IG) 渠道权重')}
     ${pw('google', '② Google (PMax/YouTube) 渠道权重')}
-    ${pw('tiktok', '② TikTok 渠道权重')}
 
     <div class="wt-group"><h4>③ 评级阈值（综合分 → S/A/B/C/D）</h4>
       ${gradeRows}
@@ -1579,8 +1587,7 @@ async function saveModel() {
       j: num('w-j'), e: num('w-e'), v: num('w-v'),
       platforms: {
         meta: Object.fromEntries(Object.keys(MW().platforms.meta).map(d => [d, num('pw-meta-' + d)])),
-        google: Object.fromEntries(Object.keys(MW().platforms.google).map(d => [d, num('pw-google-' + d)])),
-        tiktok: Object.fromEntries(Object.keys(MW().platforms.tiktok).map(d => [d, num('pw-tiktok-' + d)]))
+        google: Object.fromEntries(Object.keys(MW().platforms.google).map(d => [d, num('pw-google-' + d)]))
       }
     },
     gradeBands: MG().map(g => ({ grade: g.grade, min: num('gb-' + g.grade, 100) })),
@@ -1634,10 +1641,16 @@ function aiRowHTML(m, i, finished) {
   const thumb = src ? `<img class="ail-thumb" src="${src}" loading="lazy" alt="" onerror="this.style.opacity='0'">` : '<span class="ail-thumb ail-noimg">🗂️</span>';
   const rec = m.analysis.aiRecommendation;
   const vTxt = rec === 'keep' ? 'PASS 过' : rec === 'reject' ? 'KILL 汰' : 'HOLD 核';
+  const pf = m.analysis.platform;
+  const pfb = pf
+    ? `<span class="ail-plat ${pf.fbVerdict || ''}" title="Meta 适配 ${pf.fbFit ?? '?'}/10 · ${pf.fbVerdict === 'pass' ? '可投' : pf.fbVerdict === 'reject' ? '受限' : '复核'}">FB</span>` +
+      `<span class="ail-plat ${pf.googleVerdict || ''}" title="Google 适配 ${pf.googleFit ?? '?'}/10 · ${pf.googleVerdict === 'pass' ? '可投' : pf.googleVerdict === 'reject' ? '受限' : '复核'}">GG</span>`
+    : '';
   return `<div class="ail-row${finished ? ' done' : ''}" data-id="${m.id}">
     <span class="ail-idx">${String(i + 1).padStart(2, '0')}</span>
     ${thumb}
     <span class="ail-name" title="${esc(m.name)}">${esc(m.name)}</span>
+    <span class="ail-plats" data-p>${finished ? pfb : ''}</span>
     <span class="ail-verdict${finished ? ` show ${rec || 'review'}` : ''}" data-v>${finished ? vTxt : ''}</span>
     <span class="ail-state" data-s>${finished ? 'DONE' : 'QUEUED'}</span>
   </div>`;

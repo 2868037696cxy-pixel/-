@@ -62,7 +62,7 @@ export function buildAdvice(material, analysis, basic, custom = {}) {
   const ranked = Object.entries(plats)
     .filter(([, p]) => p.verdict !== 'NO')
     .sort((a, b) => b[1].fit - a[1].fit)
-    .map(([k]) => ({ meta: 'Meta Reels', google: 'Google PMax/YouTube', tiktok: 'TikTok' }[k]));
+    .map(([k]) => ({ meta: 'Meta Reels', google: 'Google PMax/YouTube' }[k]));
   if (ranked.length) {
     advice.push(`推荐测试渠道：${ranked.slice(0, 2).join(' + ')}`);
   } else {
@@ -77,7 +77,7 @@ export function buildAdvice(material, analysis, basic, custom = {}) {
   if (h.score >= 8) advice.push('前3秒钩子强劲，可视为核心优势保留');
   if (v.ctaScore < 6) advice.push('建议修改点：结尾CTA动作指引偏弱，建议强化按钮视觉+限时紧迫感');
   if (basic?.mediaType === 'video' && basic.aspect !== '9:16' && basic.aspect !== '1:1') {
-    advice.push('建议修改点：补做 9:16 竖版（适配 Reels/TikTok 主战场）');
+    advice.push('建议修改点：补做 9:16 竖版（适配 Reels/Shorts 主战场）');
   }
   if (basic?.mediaType === 'video' && !(material?.subtitles?.length)) {
     advice.push('建议修改点：添加字幕（多数用户静音观看）');
