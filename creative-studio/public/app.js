@@ -414,6 +414,20 @@ function gotoCategory(cat) {
 // ---------------- 审片扫描视图（一张一张检查 + 进度条） ----------------
 let reviewIdx = 0;
 let reviewQueue = [];
+let revMode = 'single';     // single 单张扫描 / bulk 批量棋盘
+let bulkSel = new Set();    // 批量棋盘已选素材 id
+let bulkPage = 0;           // 当前批次
+let lastBulkIdx = null;     // shift 连续选择锚点
+let lastPageIds = [];       // 当前批 id 顺序
+const BATCH = 50;           // 每批 50 张
+
+function setRevMode(v) {
+  revMode = v;
+  bulkSel.clear();
+  reviewIdx = 0;
+  bulkPage = 0;
+  renderMain();
+}
 
 function renderReview(list) {
   reviewQueue = list;
@@ -422,17 +436,30 @@ function renderReview(list) {
   $('cats').classList.add('hidden');
   $('empty').classList.add('hidden');
   $('review').classList.remove('hidden');
-  if (!list.length) { $('review').innerHTML = reviewDoneHTML([]); return; }
-  if (reviewIdx >= list.length) reviewIdx = list.length - 1;
-  if (reviewIdx < 0) reviewIdx = 0;
-  const m = list[reviewIdx];
+  if (!list.length) { $('review').innerHTML = reviewDoneHTML(); return; }
+  const modebar = `
+  <div class="rev-modebar">
+    <div class="rev-modeseg">
+      <button class="rv-seg ${revMode === 'single' ? 'on' : ''}" onclick="setRevMode('single')">🔍 单张扫描</button>
+      <button class="rv-seg ${revMode === 'bulk' ? 'on' : ''}" onclick="setRevMode('bulk')">▦ 批量棋盘</button>
+    </div>
+    <span class="rv-modehint">${revMode === 'single' ? '一张一张检查：P 通过 · X 淘汰 · ←/→ 切换' : `大批量扫选：每批 ${BATCH} 张，点选多张后统一通过/淘汰 · Shift 连续选 · Ctrl 加减选 · 双击看详情`}</span>
+  </div>`;
+  $('review').innerHTML = modebar + (revMode === 'bulk' ? reviewBulkHTML(list) : reviewSingleHTML(list));
+}
+
+// 单张扫描模式主体
+function reviewSingleHTML(list) {
   const total = list.length;
   const reviewed = list.filter(x => revOf(x) !== 'todo').length;
   const keepN = list.filter(x => revOf(x) === 'keep').length;
   const rejN = list.filter(x => revOf(x) === 'reject').length;
+  if (reviewIdx >= total) reviewIdx = total - 1;
+  if (reviewIdx < 0) reviewIdx = 0;
+  const m = list[reviewIdx];
   const pct = Math.round(((reviewIdx + 1) / total) * 100);
 
-  $('review').innerHTML = `
+  return `
   <div class="review-top">
     <div class="rv-meta">检查进度：第 <b>${reviewIdx + 1}</b> / <b>${total}</b> 张
       <span class="rv-stats"><i class="rv-chip keep">✅ 通过 ${keepN}</i><i class="rv-chip reject">❌ 淘汰 ${rejN}</i><i class="rv-chip todo">⏳ 未审 ${total - reviewed}</i></span>
@@ -509,6 +536,109 @@ function stripHTML(list, cur) {
 }
 function reviewJump(i) { reviewIdx = i; renderReview(filtered()); }
 function reviewStep(d) { reviewIdx += d; renderReview(filtered()); }
+
+// ---------------- 批量棋盘模式（一个大框平铺 50/100 张批量扫选） ----------------
+function reviewBulkHTML(list) {
+  const total = list.length;
+  const reviewed = total - list.filter(x => revOf(x) === 'todo').length;
+  const keepN = list.filter(x => revOf(x) === 'keep').length;
+  const rejN = list.filter(x => revOf(x) === 'reject').length;
+  const pages = Math.max(1, Math.ceil(total / BATCH));
+  if (bulkPage >= pages) bulkPage = pages - 1;
+  if (bulkPage < 0) bulkPage = 0;
+  const start = bulkPage * BATCH;
+  const pageList = list.slice(start, start + BATCH);
+  lastPageIds = pageList.map(m => m.id);
+  const pct = total ? Math.round((reviewed / total) * 100) : 0;
+  const selInPage = pageList.filter(m => bulkSel.has(m.id));
+  const onlyTodo = F.review.has('todo');
+
+  return `
+  <div class="review-top">
+    <div class="rv-meta">批量进度：已处理 <b>${reviewed}</b> / <b>${total}</b> 张
+      <span class="rv-stats"><i class="rv-chip keep">✅ 通过 ${keepN}</i><i class="rv-chip reject">❌ 淘汰 ${rejN}</i><i class="rv-chip todo">⏳ 未审 ${total - reviewed}</i></span>
+    </div>
+    <div class="rv-progress"><i style="width:${pct}%"></i></div>
+  </div>
+  <div class="bulk-toolbar">
+    <button class="rv-btn keep" style="flex:0 1 auto;padding:9px 18px" onclick="bulkAct('keep')">✅ 通过所选 (${bulkSel.size})</button>
+    <button class="rv-btn reject" style="flex:0 1 auto;padding:9px 18px" onclick="bulkAct('reject')">❌ 淘汰所选 (${bulkSel.size})</button>
+    <button class="rv-btn ghost" style="flex:0 1 auto;padding:9px 14px" onclick="bulkSelectAll()">全选本批 (${selInPage.length}/${pageList.length})</button>
+    <button class="rv-btn ghost" style="flex:0 1 auto;padding:9px 14px" onclick="bulkClearSel()">清空选择</button>
+    <label class="bulk-onlytodo"><input type="checkbox" ${onlyTodo ? 'checked' : ''} onchange="reviewOnlyToggle(this.checked)"> 只看未审（处理后自动翻批）</label>
+  </div>
+  <div class="bulk-grid">
+    ${pageList.map(bulkItemHTML).join('')}
+  </div>
+  <div class="bulk-pager">
+    <button class="btn sm line" ${bulkPage === 0 ? 'disabled' : ''} onclick="bulkPageGo(-1)">← 上一批</button>
+    <span>第 ${bulkPage + 1} / ${pages} 批 · 每批 ${BATCH} 张 · 共 ${total} 张 · 已选 ${bulkSel.size} 张</span>
+    <button class="btn sm line" ${bulkPage >= pages - 1 ? 'disabled' : ''} onclick="bulkPageGo(1)">下一批 →</button>
+  </div>`;
+}
+
+function bulkItemHTML(m) {
+  const src = thumbOf(m);
+  const st = revOf(m);
+  const sel = bulkSel.has(m.id);
+  const img = src ? `<img src="${src}" loading="lazy" alt="">` : '<span style="font-size:20px">🗂️</span>';
+  return `<div class="bulk-item ${sel ? 'sel' : ''} bulk-${st}" data-id="${m.id}"
+      onclick="bulkClick(event,'${m.id}')" ondblclick="openDrawer('${m.id}')"
+      title="${esc(m.name)} · ${fmt(m.analysis.composite)}分 · ${st === 'keep' ? '已通过' : st === 'reject' ? '已淘汰' : '未审查'}">
+      ${img}
+      <span class="bulk-score badge-${effGrade(m)}">${fmt(m.analysis.composite)}</span>
+      ${sel ? '<span class="bulk-check">✓</span>' : ''}
+      <span class="st st-${st === 'keep' ? 'go' : st === 'reject' ? 'no' : 'cond'}"></span>
+    </div>`;
+}
+
+function bulkClick(ev, id) {
+  const idx = lastPageIds.indexOf(id);
+  if (ev.shiftKey && lastBulkIdx != null) {
+    // Shift 连续选择
+    const [a, b] = [Math.min(idx, lastBulkIdx), Math.max(idx, lastBulkIdx)];
+    for (let i = a; i <= b; i++) bulkSel.add(lastPageIds[i]);
+  } else if (ev.ctrlKey || ev.metaKey) {
+    // Ctrl 加减选
+    if (bulkSel.has(id)) bulkSel.delete(id); else bulkSel.add(id);
+    lastBulkIdx = idx;
+  } else {
+    // 单选
+    bulkSel = new Set([id]);
+    lastBulkIdx = idx;
+  }
+  renderReview(filtered());
+}
+function bulkSelectAll() {
+  const pageList = lastPageIds.map(id => MATERIALS.find(x => x.id === id)).filter(Boolean);
+  if (bulkSel.size === pageList.length && [...pageList].every(m => bulkSel.has(m.id))) bulkSel.clear();
+  else for (const m of pageList) bulkSel.add(m.id);
+  renderReview(filtered());
+}
+function bulkClearSel() { bulkSel.clear(); renderReview(filtered()); }
+function bulkPageGo(d) { bulkPage += d; bulkSel.clear(); renderReview(filtered()); }
+function reviewOnlyToggle(on) {
+  F.review = on ? new Set(['todo']) : new Set();
+  bulkPage = 0; bulkSel.clear();
+  renderPanel(); renderMain();
+}
+async function bulkAct(status) {
+  if (!bulkSel.size) return toast('先点选素材（可 Shift 连续选 / Ctrl 多选 / 全选本批）');
+  const ids = [...bulkSel];
+  toast(`正在批量标记 ${ids.length} 张…`);
+  const results = await Promise.all(ids.map(id =>
+    fetch('/api/materials/' + id, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ custom: { review: status } })
+    }).then(r => r.json())
+  ));
+  const map = new Map(results.map(x => [x.id, x]));
+  MATERIALS = MATERIALS.map(x => map.get(x.id) || x);
+  bulkSel.clear();
+  lastBulkIdx = null;
+  renderPanel(); renderMain();
+  toast(`✅ 已批量${status === 'keep' ? '通过' : '淘汰'} ${ids.length} 张`);
+}
 async function reviewAct(status) {
   const m = reviewQueue[reviewIdx];
   if (!m) return;
@@ -1120,14 +1250,25 @@ $('fRiskOnly').onchange = e => { F.riskOnly = e.target.checked; renderPanel(); r
 $('fClear').onclick = clearFilters;
 $('sortBy').onchange = e => { sortBy = e.target.value; renderMain(); };
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeDrawer(); closeModal(); closeModel(); return; }
+  if (e.key === 'Escape') {
+    closeDrawer(); closeModal(); closeModel();
+    if (view === 'review' && revMode === 'bulk') bulkClearSel();
+    return;
+  }
   // 审片模式快捷键（输入框内不触发）
   if (view === 'review' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) &&
       document.getElementById('drawer').classList.contains('hidden')) {
-    if (e.key === 'ArrowRight') { e.preventDefault(); reviewStep(1); }
-    else if (e.key === 'ArrowLeft') { e.preventDefault(); reviewStep(-1); }
-    else if (e.key === 'p' || e.key === 'P') { reviewAct('keep'); }
-    else if (e.key === 'x' || e.key === 'X') { reviewAct('reject'); }
+    if (revMode === 'single') {
+      if (e.key === 'ArrowRight') { e.preventDefault(); reviewStep(1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); reviewStep(-1); }
+      else if (e.key === 'p' || e.key === 'P') { reviewAct('keep'); }
+      else if (e.key === 'x' || e.key === 'X') { reviewAct('reject'); }
+    } else {
+      // 批量棋盘模式：方向键翻批
+      if (e.key === 'ArrowRight') { e.preventDefault(); bulkPageGo(1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); bulkPageGo(-1); }
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); bulkSelectAll(); }
+    }
   }
 });
 
