@@ -11,12 +11,13 @@ import crypto from 'crypto';
 import { DatabaseSync } from 'node:sqlite';
 
 import {
-  DEFAULT_WEIGHTS, JEV_LABELS, ENUMS, POLICY_RULES, GRADE_BANDS,
+  DEFAULT_WEIGHTS, DEFAULT_MODEL, sanitizeModel,
+  JEV_LABELS, ENUMS, POLICY_RULES, GRADE_BANDS,
   recomputeAnalysis, heuristicBaseline, scanPolicy
 } from './engine/jev-engine.js';
 import { buildTags, indexText } from './engine/tags.js';
 import { probeMedia, extractKeyframes, buildTimeline, capabilities } from './engine/pipeline.js';
-import { analyzeWithAI, aiAvailable } from './engine/ai.js';
+import { analyzeWithTypeSafe, aiAvailable } from './engine/ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -25,6 +26,17 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const LIBRARY_DIR = path.join(ROOT, 'library');
 const THUMBS_DIR = path.join(LIBRARY_DIR, 'thumbs');
 const DB_FILE = path.join(DATA_DIR, 'workbench.db');
+
+// 加载本地 .env（TYPESAFE_API_KEY 等）
+try {
+  const envPath = path.join(ROOT, '.env');
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf-8').split('\n')) {
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.+)\s*$/i);
+      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].trim();
+    }
+  }
+} catch {} // 无 .env 时忽略（仅失去 AI 评测能力）
 
 for (const dir of [DATA_DIR, LIBRARY_DIR, THUMBS_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -41,16 +53,21 @@ CREATE TABLE IF NOT EXISTS materials (
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 `);
 
-// 模型权重存取
-const loadWeights = () => {
+// 完整模型配置存取（weights + gradeBands + verdict）
+const loadModel = () => {
+  try {
+    const row = db.prepare(`SELECT value FROM meta WHERE key='model'`).get();
+    if (row) return sanitizeModel(JSON.parse(row.value));
+  } catch {}
+  // 兼容旧版 weights 存储
   try {
     const row = db.prepare(`SELECT value FROM meta WHERE key='weights'`).get();
-    if (row) return JSON.parse(row.value);
+    if (row) return sanitizeModel({ weights: JSON.parse(row.value) });
   } catch {}
-  return DEFAULT_WEIGHTS;
+  return sanitizeModel(DEFAULT_MODEL);
 };
-const saveWeights = w => db.prepare(`INSERT INTO meta(key,value) VALUES('weights',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(JSON.stringify(w));
-let weights = loadWeights();
+const saveModelCfg = model => db.prepare(`INSERT INTO meta(key,value) VALUES('model',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(JSON.stringify(model));
+let model = loadModel();
 
 // 素材行 → 对象
 const rowToMaterial = row => ({
@@ -89,12 +106,14 @@ function refresh(m) {
     return checked ? (auto || { key: r.key, level: r.severity, label: r.label, automatic: false }) : null;
   }).filter(Boolean);
 
+  // 保留 aiAssessed 标记（recompute 返回新对象会丢弃）
+  const wasAssessed = m.analysis.aiAssessed === true;
   m.analysis = recomputeAnalysis(
     { hook, engagement, value, policy: { score: 9, risks } },
-    m.basic, weights
+    m.basic, model
   );
+  m.analysis.aiAssessed = wasAssessed;
   m.analysis.tags = buildTags(m, m.analysis, m.basic, m.custom);
-  m.analysis.aiAssessed = m.analysis.aiAssessed || false;
   m.timeline = buildTimeline(m.basic, m.analysis);
   m.updatedAt = Date.now();
   return m;
@@ -254,25 +273,48 @@ app.delete('/api/materials/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- AI 多模态评测（可选，需 GEMINI_API_KEY） ----
+// ---- AI 评测（TypeSafe System One / Jev 模型，需 TYPESAFE_API_KEY） ----
 app.post('/api/analyze/:id', async (req, res) => {
   const m = getMaterial(req.params.id);
   if (!m) return res.status(404).json({ error: 'not found' });
-  if (!aiAvailable()) return res.status(200).json({ ai: false, message: '未配置 GEMINI_API_KEY，当前使用本地启发式评分。' });
+  if (!aiAvailable()) return res.status(200).json({ ai: false, message: '未配置 TYPESAFE_API_KEY，当前使用本地启发式评分。' });
   try {
-    const frames = (m.basic?.frames || []).map(f => path.join(THUMBS_DIR, f.file)).filter(fs.existsSync);
-    if (!frames.length) return res.status(200).json({ ai: false, message: '无关键帧可分析' });
-    const result = await analyzeWithAI(frames, frames.map(() => 'image/jpeg'));
-    if (!result) return res.status(200).json({ ai: false, message: 'AI 评测未返回有效结果' });
-    m.analysis.hook = { ...m.analysis.hook, ...result.hook };
-    m.analysis.engagement = { ...m.analysis.engagement, ...result.engagement };
-    m.analysis.value = { ...m.analysis.value, ...result.value };
+    const result = await analyzeWithTypeSafe(m);
+    if (!result) return res.status(200).json({ ai: false, message: 'TypeSafe 评测未返回有效结果' });
+
+    // 回填 J/E/V 分数类字段（AI 权威判断）
+    if (result.hook?.score != null) m.analysis.hook.score = result.hook.score;
+    if (result.engagement?.score != null) m.analysis.engagement.score = result.engagement.score;
+    if (result.value?.score != null) m.analysis.value.score = result.value.score;
+    if (result.value?.ctaScore != null) m.analysis.value.ctaScore = result.value.ctaScore;
+
+    // 视觉/分类字段：仅当用户尚未标注（仍是启发式默认值）时由 AI 补充
+    const isDefault = (v, defs) => !v || defs.includes(v);
+    if (result.hook?.hookType && isDefault(m.analysis.hook.hookType, ['无明确钩子'])) {
+      m.analysis.hook.hookType = result.hook.hookType;
+    }
+    if (result.engagement?.actor && isDefault(m.analysis.engagement.actor, ['无真人'])) {
+      m.analysis.engagement.actor = result.engagement.actor;
+    }
+    if (result.engagement?.scene && isDefault(m.analysis.engagement.scene, ['室内'])) {
+      m.analysis.engagement.scene = result.engagement.scene;
+    }
+    if (result.engagement?.beforeAfter != null && !m.analysis.engagement.beforeAfter) {
+      m.analysis.engagement.beforeAfter = result.engagement.beforeAfter;
+    }
     m.analysis.aiAssessed = true;
-    const pr = result.policy_risks || [];
-    pr.forEach(r => { if (r.key) m.custom.riskState[r.key] = true; });
+
+    // 合规风险：Noul 判定 → riskState 勾选（critical 类）
+    const riskState = m.custom.riskState || {};
+    const RULES = { riskHealth: 'health', riskMislead: 'mislead', riskPolicy: 'adult' };
+    for (const [k, ruleKey] of Object.entries(RULES)) {
+      if (result.policy?.[k] === true) riskState[ruleKey] = true;
+    }
+    m.custom.riskState = riskState;
+
     refresh(m);
     saveMaterial(m);
-    res.json({ ai: true, material: m });
+    res.json({ ai: true, provider: 'typesafe', confidence: result.confidence, material: m });
   } catch (e) {
     res.status(500).json({ ai: false, error: e.message });
   }
@@ -281,7 +323,8 @@ app.post('/api/analyze/:id', async (req, res) => {
 // ---- 模型与能力 ----
 app.get('/api/model', async (req, res) => {
   res.json({
-    weights,
+    model,
+    defaults: DEFAULT_MODEL,
     labels: JEV_LABELS,
     enums: ENUMS,
     policyRules: POLICY_RULES,
@@ -291,32 +334,15 @@ app.get('/api/model', async (req, res) => {
   });
 });
 app.put('/api/model', (req, res) => {
-  const w = req.body?.weights;
-  if (!w) return res.status(400).json({ error: '缺少 weights' });
-  const clean = {
-    j: num(w.j, DEFAULT_WEIGHTS.j),
-    e: num(w.e, DEFAULT_WEIGHTS.e),
-    v: num(w.v, DEFAULT_WEIGHTS.v),
-    platforms: {
-      meta:   sanW(w.platforms?.meta, DEFAULT_WEIGHTS.platforms.meta),
-      google: sanW(w.platforms?.google, DEFAULT_WEIGHTS.platforms.google),
-      tiktok: sanW(w.platforms?.tiktok, DEFAULT_WEIGHTS.platforms.tiktok)
-    }
-  };
-  weights = clean;
-  saveWeights(weights);
+  const next = sanitizeModel(req.body || {});
+  model = next;
+  saveModelCfg(model);
   for (const row of db.prepare(`SELECT * FROM materials WHERE status='active'`).all()) {
     const m = rowToMaterial(row);
     refresh(m); saveMaterial(m);
   }
-  res.json({ weights });
+  res.json({ model });
 });
-const num = (x, d) => { const n = Number(x); return Number.isFinite(n) ? Math.max(0, Math.min(10, n)) : d; };
-const sanW = (o, def) => {
-  const r = {};
-  for (const k of Object.keys(def)) r[k] = num(o?.[k], def[k]);
-  return r;
-};
 
 const PORT = process.env.PORT || 8700;
 // 启动时全库重算（规则/模型更新后自动纠正存量评分）
@@ -326,5 +352,5 @@ for (const row of db.prepare(`SELECT * FROM materials WHERE status='active'`).al
 app.listen(PORT, async () => {
   const caps = await capabilities();
   console.log(`JEV Creative Workbench 已启动: http://localhost:${PORT}`);
-  console.log(`能力: ffmpeg=${caps.ffmpeg} ffprobe=${caps.ffprobe} OCR=${caps.tesseract} ASR=${caps.whisper} AI=${aiAvailable()}`);
+  console.log(`能力: ffmpeg=${caps.ffmpeg} ffprobe=${caps.ffprobe} OCR=${caps.tesseract} ASR=${caps.whisper} TypeSafeAI=${aiAvailable() ? '✓(Jev)' : '✗(无 TYPESAFE_API_KEY)'}`);
 });

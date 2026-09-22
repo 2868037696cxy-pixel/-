@@ -32,13 +32,18 @@ const CH_ICON = { google: 'G', meta: 'M', tiktok: 'T' };
 const CH_NAME = { google: 'Google', meta: 'Meta', tiktok: 'TikTok' };
 
 // ---------------- 客户端镜像计算（实时预览用） ----------------
+// 兼容新旧模型结构：新结构 MODEL.model = {weights, gradeBands, verdict}
+const MW = () => MODEL.model?.weights || MODEL.weights;
+const MG = () => MODEL.model?.gradeBands || MODEL.grades;
+const MV = () => MODEL.model?.verdict || { go: 72, cond: 58 };
+
 function clComputeComposite(a) {
-  const w = MODEL.weights;
+  const w = MW();
   const sum = w.j + w.e + w.v;
   const s = ((a.hook?.score || 0) * w.j + (a.engagement?.score || 0) * w.e + (a.value?.score || 0) * w.v) / sum;
   return fmt(s * 10);
 }
-function clGrade(score) { return MODEL.grades.find(b => score >= b.min) || MODEL.grades[MODEL.grades.length - 1]; }
+function clGrade(score) { const g = MG(); return g.find(b => score >= b.min) || g[g.length - 1]; }
 function clPolicyScore(risks) {
   const c = risks.filter(r => r.level === 'critical').length, w = risks.filter(r => r.level === 'warning').length;
   return Math.max(1, Math.min(10, fmt(10 - c * 4 - w * 1.2)));
@@ -54,7 +59,7 @@ function clNative(a) {
   return Math.max(0, Math.min(10, s));
 }
 function clPlatforms(m, risks) {
-  const a = m.analysis, w = MODEL.weights.platforms, basic = m.basic;
+  const a = m.analysis, w = MW().platforms, basic = m.basic, vd = MV();
   const j = a.hook?.score || 0, e = a.engagement?.score || 0, v = a.value?.score || 0;
   const P = clPolicyScore(risks), nat = clNative(a);
   const critical = risks.filter(r => r.level === 'critical'), warning = risks.filter(r => r.level === 'warning');
@@ -71,7 +76,7 @@ function clPlatforms(m, risks) {
     }
     if (pw.hook === w.meta.hook && (e.trust || []).includes('UGC真人出镜')) { fit += 3; reasons.push('UGC 社交信任感强'); }
     fit = Math.max(0, Math.min(100, fmt(fit)));
-    let verdict = fit >= 72 ? 'GO' : fit >= 58 ? 'COND' : 'NO';
+    let verdict = fit >= (vd.go ?? 72) ? 'GO' : fit >= (vd.cond ?? 58) ? 'COND' : 'NO';
     if (critical.length) { verdict = 'NO'; reasons.unshift('违禁(一票否决)'); }
     for (const rw of warning) if (verdict === 'GO') verdict = 'COND';
     return { fit, verdict, reasons };
@@ -163,7 +168,7 @@ function setF(key, val, on) {
 }
 function renderPanel() {
   // 评级胶囊
-  $('fGrades').innerHTML = MODEL.grades.map(g => {
+  $('fGrades').innerHTML = MG().map(g => {
     const n = MATERIALS.filter(m => effGrade(m) === g.grade).length;
     return `<span class="fchip ${F.grades.has(g.grade) ? 'on' : ''}" onclick="togF('grades','${g.grade}')"><i class="gdot" style="background:${GCOLOR[g.grade]}"></i>${g.grade} · ${g.label}<small>${n}</small></span>`;
   }).join('');
@@ -329,7 +334,7 @@ const ST_LABEL = { go: '可投放', cond: '需优化', no: '不可投' };
 
 function overviewChartsHTML(list) {
   // 评级分布
-  const gd = MODEL.grades.map(g => ({ ...g, n: list.filter(m => effGrade(m) === g.grade).length }));
+  const gd = MG().map(g => ({ ...g, n: list.filter(m => effGrade(m) === g.grade).length }));
   const gMax = Math.max(1, ...gd.map(x => x.n));
   const gradeBar = gd.map(g => `
     <div class="dist-row">
@@ -365,7 +370,7 @@ function categoryCardHTML(cat, mats) {
   const riskN = mats.filter(m => policyRiskCount(m) > 0).length;
   const stCount = { go: 0, cond: 0, no: 0 };
   for (const m of mats) stCount[statusOf(m)]++;
-  const gd = MODEL.grades.map(g => ({ ...g, n: mats.filter(m => effGrade(m) === g.grade).length }));
+  const gd = MG().map(g => ({ ...g, n: mats.filter(m => effGrade(m) === g.grade).length }));
   const thumbs = mats.slice(0, 12).map(m => {
     const src = thumbOf(m);
     const st = statusOf(m);
@@ -918,7 +923,7 @@ function renderDrawer() {
 
   $('drawer').innerHTML = `
   <div class="drawer-head"><h2>素材深度剖析工作台</h2>
-    ${MODEL.ai.available ? `<button class="btn sm line" id="btnAI">✨ AI 多模态评测</button>` : `<span class="subtle" title="配置 GEMINI_API_KEY 后可启用">🤖 AI 评测未启用</span>`}
+    ${MODEL.ai.available ? `<button class="btn sm line" id="btnAI">✨ TypeSafe 评测</button>` : `<span class="subtle" title="在 .env 配置 TYPESAFE_API_KEY 后可启用">🤖 TypeSafe 评测未启用</span>`}
     <button class="shape-btn" onclick="closeDrawer()">✕</button>
   </div>
   <div class="drawer-body">
@@ -932,6 +937,7 @@ function renderDrawer() {
         <div style="color:var(--muted);font-size:12.5px;margin-top:4px">
           ${b.mediaType === 'video' ? '🎬 视频' : '🖼️ 单图'} · ${b.aspect || '?'} · ${b.durationSec ? b.durationSec + 's' : ''} · ${b.resolution || '未知分辨率'} · ${b.hasAudio ? '有音轨' : '无音轨'}
           ${m.custom?.manualGrade ? ` · 人工定级 ${m.custom.manualGrade}` : ''}
+          ${m.analysis.aiAssessed ? `<span class="vchip fit" title="TypeSafe(Jev) 结构化评测，基于素材名称/字幕/标注文本">✨ TypeSafe 已评测</span>` : ''}
         </div>
         <div class="verdicts" style="margin-top:8px">${statusChips}</div>
       </div>
@@ -954,7 +960,7 @@ function renderDrawer() {
         <div class="dim"><span class="lbl">${MODEL.labels.j}</span><input type="range" min="1" max="10" step="0.1" value="${a.hook.score}" id="s-j" oninput="onJevIn(this)"><span class="val" id="v-j">${a.hook.score}</span></div>
         <div class="dim"><span class="lbl">${MODEL.labels.e}</span><input type="range" min="1" max="10" step="0.1" value="${a.engagement.score}" id="s-e" oninput="onJevIn(this)"><span class="val" id="v-e">${a.engagement.score}</span></div>
         <div class="dim"><span class="lbl">${MODEL.labels.v}</span><input type="range" min="1" max="10" step="0.1" value="${a.value.score}" id="s-v" oninput="onJevIn(this)"><span class="val" id="v-v">${a.value.score}</span></div>
-        <div class="subtle" style="margin-top:6px">权重 J=${MODEL.weights.j} · E=${MODEL.weights.e} · V=${MODEL.weights.v}（可在「评分模型」调整）</div>
+        <div class="subtle" style="margin-top:6px">权重 J=${MW().j} · E=${MW().e} · V=${MW().v}（可在「评分模型」调整）</div>
       </div>
     </div>
 
@@ -1203,10 +1209,10 @@ async function clearOverride() {
 }
 async function runAI(id) {
   const r = await fetch('/api/analyze/' + id, { method: 'POST' }).then(x => x.json());
-  if (!r.ai) { toast('⚠ ' + (r.message || 'AI 不可用')); return; }
+  if (!r.ai) { toast('⚠ ' + (r.message || 'TypeSafe 不可用')); return; }
   MATERIALS = MATERIALS.map(x => x.id === id ? r.material : x);
   render(); renderDrawer();
-  toast('AI 多模态评测完成');
+  toast('✨ TypeSafe(Jev) 评测完成');
 }
 async function delMaterial(id) {
   if (!confirm('确定删除该素材？（本地媒体文件与抽帧缩略图会一并清理）')) return;
@@ -1268,7 +1274,7 @@ function openAdd() {
   $('modal').innerHTML = `
     <h2>导入素材</h2>
     <div class="sub">本地工作台：文件将入库并自动执行 ffprobe 元数据探测 + ffmpeg 关键帧抽取 + JEV 启发式评分</div>
-    <div class="capsline">🛠 引擎能力：ffmpeg ${MODEL.caps?.ffmpeg ? '✓' : '✗'} · ffprobe ${MODEL.caps?.ffprobe ? '✓' : '✗'} · OCR ${MODEL.caps?.tesseract ? '✓' : '✗(可手动粘贴)'} · ASR ${MODEL.caps?.whisper ? '✓' : '✗(可手动粘贴)'} · 多模态AI ${MODEL.ai?.available ? '✓' : '✗(配 GEMINI_API_KEY 启用)'}</div>
+    <div class="capsline">🛠 引擎能力：ffmpeg ${MODEL.caps?.ffmpeg ? '✓' : '✗'} · ffprobe ${MODEL.caps?.ffprobe ? '✓' : '✗'} · OCR ${MODEL.caps?.tesseract ? '✓' : '✗(可手动粘贴)'} · ASR ${MODEL.caps?.whisper ? '✓' : '✗(可手动粘贴)'} · TypeSafe AI ${MODEL.ai?.available ? '✓(Jev)' : '✗(.env 配 TYPESAFE_API_KEY 启用)'}</div>
     <div class="dropzone" id="dz">点击或拖拽文件到此处上传<small>支持图片、视频（≤500MB/个，视频自动抽帧）</small>
       <input type="file" id="fileIn" multiple accept="image/*,video/*" hidden>
     </div>
@@ -1323,46 +1329,87 @@ async function runLinkImport() {
   toast('已从链接入库（外链素材默认按单图，可在详情修改）');
 }
 
-// ---------------- 评分模型弹窗 ----------------
+// ---------------- 评分模型弹窗（完整配置中心） ----------------
 function openModel() {
   $('modelModalBackdrop').classList.remove('hidden');
-  const w = MODEL.weights;
+  $('modelModal').classList.remove('hidden');
+  const w = MW();
+  const gb = MG();
+  const vd = MV();
+  const dims = MODEL.labels || { j: 'J', e: 'E', v: 'V' };
   const pw = (k, title) => `
     <div class="wt-group"><h4>${title} 渠道适配权重</h4>
     <div class="wt-grid">
       ${Object.keys(w.platforms[k]).map(d => `<div class="wt"><label>${d}</label><input id="pw-${k}-${d}" type="number" min="0" max="10" step="0.1" value="${w.platforms[k][d]}"></div>`).join('')}
     </div></div>`;
+  const gradeRows = gb.map(g => `
+    <div class="gr-row">
+      <span class="gr-badge badge-${g.grade}">${g.grade} 级 · ${g.label}</span>
+      <input id="gb-${g.grade}" type="number" min="0" max="100" step="1" value="${g.min}">
+      <span class="subtle">${g.advice}</span>
+    </div>`).join('');
   $('modelModal').innerHTML = `
-    <h2>JEV 评分模型</h2>
-    <div class="sub">综合分 = (J×Wj + E×We + V×Wv) / ΣW × 10。渠道适配 = 平台权重加权(J/E/V/合规/原生感) × 10。保存后全库自动重算。</div>
-    <div class="wt-group"><h4>黄金三维权重</h4>
-    <div class="wt-grid">
-      <div class="wt"><label>J · Hook 吸睛度</label><input id="w-j" type="number" min="0" max="10" step="0.1" value="${w.j}"></div>
-      <div class="wt"><label>E · Engagement 沉浸信任</label><input id="w-e" type="number" min="0" max="10" step="0.1" value="${w.e}"></div>
-      <div class="wt"><label>V · Value & CTA</label><input id="w-v" type="number" min="0" max="10" step="0.1" value="${w.v}"></div>
-    </div></div>
-    ${pw('meta', 'Meta (FB/IG)')}
-    ${pw('google', 'Google (PMax/YouTube)')}
-    ${pw('tiktok', 'TikTok')}
+    <h2>JEV 评分模型 <span class="vchip fit" style="vertical-align:middle">TypeSafe AI 联动</span></h2>
+    <div class="sub">综合分 = (J×Wj + E×We + V×Wv) / ΣW × 10。渠道适配 = 平台权重加权(J/E/V/合规/原生感) × 10 + 画幅/画质加成。保存后全库自动重算。</div>
+
+    <div class="wt-group"><h4>① 黄金三维权重（影响综合分）</h4>
+      <div class="wt-grid">
+        <div class="wt"><label>J · Hook 吸睛度</label><input id="w-j" type="number" min="0" max="10" step="0.1" value="${w.j}"></div>
+        <div class="wt"><label>E · Engagement 沉浸信任</label><input id="w-e" type="number" min="0" max="10" step="0.1" value="${w.e}"></div>
+        <div class="wt"><label>V · Value & CTA</label><input id="w-v" type="number" min="0" max="10" step="0.1" value="${w.v}"></div>
+      </div>
+      <div class="subtle" style="margin-top:6px">${dims.j} · ${dims.e} · ${dims.v}</div>
+    </div>
+
+    ${pw('meta', '② Meta (FB/IG) 渠道权重')}
+    ${pw('google', '② Google (PMax/YouTube) 渠道权重')}
+    ${pw('tiktok', '② TikTok 渠道权重')}
+
+    <div class="wt-group"><h4>③ 评级阈值（综合分 → S/A/B/C/D）</h4>
+      ${gradeRows}
+      <div class="subtle" style="margin-top:6px">分数 ≥ 该阈值即评为对应等级，等级自动按阈值降序。</div>
+    </div>
+
+    <div class="wt-group"><h4>④ 平台判定阈值（适配分 → 可投/需优化/禁投）</h4>
+      <div class="wt-grid">
+        <div class="wt"><label>可投 GO ≥</label><input id="vd-go" type="number" min="0" max="100" step="1" value="${vd.go ?? 72}"></div>
+        <div class="wt"><label>需优化 COND ≥</label><input id="vd-cond" type="number" min="0" max="100" step="1" value="${vd.cond ?? 58}"></div>
+      </div>
+      <div class="subtle" style="margin-top:6px">低于 COND 阈值 = 禁投；命中 critical 合规项时一票否决（始终禁投）。</div>
+    </div>
+
     <div class="import-actions">
-      <button class="btn primary" onclick="saveModel()">保存并重新评分全库</button>
+      <button class="btn primary" onclick="saveModel()">💾 保存并重新评分全库</button>
+      <button class="btn ghost" onclick="resetModel()">↺ 恢复默认</button>
       <button class="btn ghost" onclick="closeModel()">关闭</button>
     </div>`;
 }
+
 async function saveModel() {
-  const num = id => { const v = Number($(id).value); return Number.isFinite(v) ? Math.max(0, Math.min(10, v)) : 0; };
-  const body = { weights: {
-    j: num('w-j'), e: num('w-e'), v: num('w-v'),
-    platforms: {
-      meta: Object.fromEntries(Object.keys(MODEL.weights.platforms.meta).map(d => [d, num('pw-meta-' + d)])),
-      google: Object.fromEntries(Object.keys(MODEL.weights.platforms.google).map(d => [d, num('pw-google-' + d)])),
-      tiktok: Object.fromEntries(Object.keys(MODEL.weights.platforms.tiktok).map(d => [d, num('pw-tiktok-' + d)]))
-    }
-  }};
+  const num = (id, max = 10) => { const v = Number($(id).value); return Number.isFinite(v) ? Math.max(0, Math.min(max, v)) : 0; };
+  const body = {
+    weights: {
+      j: num('w-j'), e: num('w-e'), v: num('w-v'),
+      platforms: {
+        meta: Object.fromEntries(Object.keys(MW().platforms.meta).map(d => [d, num('pw-meta-' + d)])),
+        google: Object.fromEntries(Object.keys(MW().platforms.google).map(d => [d, num('pw-google-' + d)])),
+        tiktok: Object.fromEntries(Object.keys(MW().platforms.tiktok).map(d => [d, num('pw-tiktok-' + d)]))
+      }
+    },
+    gradeBands: MG().map(g => ({ grade: g.grade, min: num('gb-' + g.grade, 100) })),
+    verdict: { go: num('vd-go', 100), cond: num('vd-cond', 100) }
+  };
   await fetch('/api/model', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   await loadData();
   closeModel();
   toast('模型已更新，全库重新评分');
+}
+
+async function resetModel() {
+  await fetch('/api/model', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(MODEL.defaults || {}) });
+  await loadData();
+  closeModel();
+  toast('已恢复默认模型，全库重新评分');
 }
 function closeModel() { $('modelModalBackdrop').classList.add('hidden'); $('modelModal').classList.add('hidden'); }
 function closeModal() { $('modalBackdrop').classList.add('hidden'); $('modal').classList.add('hidden'); }

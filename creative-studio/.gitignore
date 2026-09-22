@@ -2,3 +2,5 @@ node_modules/
 library/
 data/db.json
 data/model.json
+data/workbench.db
+.env

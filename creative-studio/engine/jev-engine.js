@@ -76,9 +76,9 @@ export function sanitizeModel(m) {
   const vd = m?.verdict || {};
   const model = {
     weights: {
-      j: clamp10(w.j ?? DEFAULT_WEIGHTS.j),
-      e: clamp10(w.e ?? DEFAULT_WEIGHTS.e),
-      v: clamp10(w.v ?? DEFAULT_WEIGHTS.v),
+      j: clampW(w.j ?? DEFAULT_WEIGHTS.j),
+      e: clampW(w.e ?? DEFAULT_WEIGHTS.e),
+      v: clampW(w.v ?? DEFAULT_WEIGHTS.v),
       platforms: {
         meta:   sanWeights(w.platforms?.meta, DEFAULT_WEIGHTS.platforms.meta),
         google: sanWeights(w.platforms?.google, DEFAULT_WEIGHTS.platforms.google),
@@ -99,10 +99,10 @@ export function sanitizeModel(m) {
 }
 const sanWeights = (o, def) => {
   const r = {};
-  for (const k of Object.keys(def)) r[k] = clamp10(o?.[k] ?? def[k]);
+  for (const k of Object.keys(def)) r[k] = clampW(o?.[k] ?? def[k]);
   return r;
 };
-const clamp10 = x => Math.max(0, Math.min(10, Number(x) || 0));
+const clampW = x => Math.max(0, Math.min(10, Number(x) || 0));
 const clamp100 = x => Math.max(0, Math.min(100, Number(x) || 0));
 
 // ---------------------- 核心计算 ----------------------
@@ -115,16 +115,16 @@ export function computeComposite(hookScore, engScore, valScore, weights = DEFAUL
   return Math.round(s10 * 1000) / 100;                                  // → 0-100 保留两位
 }
 
-export function getGrade(score) {
-  return GRADE_BANDS.find(b => score >= b.min) || GRADE_BANDS[GRADE_BANDS.length - 1];
+export function getGrade(score, gradeBands = GRADE_BANDS) {
+  return gradeBands.find(b => score >= b.min) || gradeBands[gradeBands.length - 1];
 }
 
 function clamp10(x) { return Math.max(1, Math.min(10, Number(x) || 1)); }
 
 // ---------------------- 平台适配度 ----------------------
-// 输入: analysis(含 hook/engagement/value/policy), basic, weights
+// 输入: analysis(含 hook/engagement/value/policy), basic, weights, verdict(阈值)
 // 输出: { meta:{fit,verdict,reasons}, google:{...}, tiktok:{...} }
-export function evaluatePlatforms(analysis, basic, weights = DEFAULT_WEIGHTS) {
+export function evaluatePlatforms(analysis, basic, weights = DEFAULT_WEIGHTS, verdict = DEFAULT_VERDICT) {
   const h = analysis.hook || {}, e = analysis.engagement || {}, v = analysis.value || {};
   const p = analysis.policy || {};
   const j = clamp10(h.score), E = clamp10(e.score), V = clamp10(v.score);
@@ -183,18 +183,20 @@ export function evaluatePlatforms(analysis, basic, weights = DEFAULT_WEIGHTS) {
     fit = Math.max(0, Math.min(100, Math.round(fit * 100) / 100));
 
     // —— 裁定 ——
-    let verdict = fit >= 72 ? 'GO' : fit >= 58 ? 'COND' : 'NO';
+    const goT = verdict?.go ?? DEFAULT_VERDICT.go;
+    const condT = verdict?.cond ?? DEFAULT_VERDICT.cond;
+    let vFinal = fit >= goT ? 'GO' : fit >= condT ? 'COND' : 'NO';
     if (critical.length) {
-      verdict = 'NO';
+      vFinal = 'NO';
       reasons.unshift(`违禁(一票否决)：${critical.map(r => r.label).join('、')}`);
       if (key === 'google') reasons.push('Google 政策对功效/侵权类目最严');
     }
     for (const w of warning) {
-      if (verdict === 'GO') verdict = 'COND';
+      if (vFinal === 'GO') vFinal = 'COND';
       reasons.push(`风险提示：${w.label}，建议修订后投放`);
     }
 
-    out[key] = { fit, verdict, reasons };
+    out[key] = { fit, verdict: vFinal, reasons };
   }
   return out;
 }
@@ -235,15 +237,19 @@ export function policyScoreFromRisks(risks = []) {
 }
 
 // ---------------------- 综合重算（素材全链路） ----------------------
-export function recomputeAnalysis(analysis, basic, weights = DEFAULT_WEIGHTS, risksOverride = null) {
-  const risks = risksOverride ?? analysis.policy?.risks ?? [];
+// model 形如 { weights, gradeBands, verdict }（来自 sanitizeModel / DEFAULT_MODEL）
+export function recomputeAnalysis(analysis, basic, model = DEFAULT_MODEL) {
+  const weights = model.weights || DEFAULT_MODEL.weights;
+  const gradeBands = model.gradeBands || DEFAULT_MODEL.gradeBands;
+  const verdict = model.verdict || DEFAULT_MODEL.verdict;
+  const risks = analysis.policy?.risks ?? [];
   const policy = {
     score: policyScoreFromRisks(risks),
     risks
   };
   const composite = computeComposite(analysis.hook?.score, analysis.engagement?.score, analysis.value?.score, weights);
-  const gradeInfo = getGrade(composite);
-  const platforms = evaluatePlatforms({ ...analysis, policy }, basic, weights);
+  const gradeInfo = getGrade(composite, gradeBands);
+  const platforms = evaluatePlatforms({ ...analysis, policy }, basic, weights, verdict);
   return {
     ...analysis,
     policy,
