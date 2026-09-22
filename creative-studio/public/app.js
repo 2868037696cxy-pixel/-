@@ -680,6 +680,9 @@ function scanTick() {
     const st = document.getElementById('scanStatus');
     if (st) st.textContent = `⚡ 扫描中 ${Math.min(scanIdx, items.length)} / ${items.length}`;
   } else {
+    // 收尾：清除 scanning 态，把最后扫到的格子标记为已扫（变绿）
+    items.forEach(el => el.classList.remove('scanning'));
+    if (items[items.length - 1]) items[items.length - 1].classList.add('scanned');
     stopBulkScan();
     toast('✅ 本批扫描完成，可点选格子标记通过/淘汰');
   }
