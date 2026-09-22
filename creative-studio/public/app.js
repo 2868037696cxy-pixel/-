@@ -565,7 +565,7 @@ function reviewBulkHTML(list) {
     <div class="rv-meta">批量进度：已处理 <b>${reviewed}</b> / <b>${total}</b> 张
       <span class="rv-stats"><i class="rv-chip keep">✅ 通过 ${keepN}</i><i class="rv-chip reject">❌ 淘汰 ${rejN}</i><i class="rv-chip todo">⏳ 未审 ${total - reviewed}</i></span>
     </div>
-    <div class="rv-progress"><i style="width:${pct}%"></i></div>
+    <div class="rv-progress cyber"><i style="width:${pct}%"></i></div>
   </div>
   <div class="bulk-toolbar">
     <button class="rv-btn keep" style="flex:0 1 auto;padding:9px 18px" onclick="bulkAct('keep')">✅ 通过所选 (${bulkSel.size})</button>
@@ -581,8 +581,24 @@ function reviewBulkHTML(list) {
     <span class="subtle" id="scanStatus"></span>
     <label class="bulk-onlytodo"><input type="checkbox" ${onlyTodo ? 'checked' : ''} onchange="reviewOnlyToggle(this.checked)"> 只看未审（处理后自动翻批）</label>
   </div>
-  <div class="bulk-grid">
-    ${pageList.map(bulkItemHTML).join('')}
+
+  <div class="scan-stage" id="scanStage">
+    <div class="scan-hud">
+      <div class="hud-l"><span class="hud-led" id="hudLed"></span>SCAN.SYSTEM <em>v2.0</em></div>
+      <div class="hud-r">
+        <span class="hud-item"><i class="hud-ico">◉</i>V <b id="hudSpeed">120</b>ms</span>
+        <span class="hud-item"><i class="hud-ico">▤</i>BATCH <b id="hudBatch">1/2</b></span>
+        <span class="hud-item hud-progress"><i id="hudPctFill"></i></span>
+        <span class="hud-item hud-pct" id="hudPct">0%</span>
+      </div>
+    </div>
+    <div class="scan-stage-inner" id="scanStageInner">
+      <span class="scorner tl"></span><span class="scorner tr"></span><span class="scorner bl"></span><span class="scorner br"></span>
+      <div class="bulk-grid">
+        ${pageList.map(bulkItemHTML).join('')}
+      </div>
+      <div class="scan-beam" id="scanBeam"><i class="beam-core"></i><i class="beam-tail"></i></div>
+    </div>
   </div>
   <div class="bulk-pager">
     <button class="btn sm line" ${bulkPage === 0 ? 'disabled' : ''} onclick="bulkPageGo(-1)">← 上一批</button>
@@ -639,7 +655,20 @@ function reviewOnlyToggle(on) {
   renderPanel(); renderMain();
 }
 
-// ---------------- 扫描动画（光带逐格扫过，速度可调） ----------------
+// ---------------- 扫描动画（光束横扫 + 逐格点亮 + HUD） ----------------
+function stageEl() { return document.getElementById('scanStage'); }
+function beamEl() { return document.getElementById('scanBeam'); }
+function hudSet(pct, speed, batch) {
+  const p = document.getElementById('hudPct');
+  if (p) p.textContent = Math.round(pct) + '%';
+  const f = document.getElementById('hudPctFill');
+  if (f) f.style.width = pct + '%';
+  const s = document.getElementById('hudSpeed');
+  if (s) s.textContent = speed;
+  const b = document.getElementById('hudBatch');
+  if (b) b.textContent = batch;
+}
+
 function startBulkScan() {
   if (scanOn) return;
   const items = [...document.querySelectorAll('.bulk-item')];
@@ -650,7 +679,12 @@ function startBulkScan() {
     items.forEach(el => el.classList.remove('scanned'));
   }
   scanOn = true;
+  const stage = stageEl();
+  if (stage) stage.classList.add('scanning');
+  const led = document.getElementById('hudLed');
+  if (led) { led.classList.add('on'); led.textContent = '● SCANNING'; }
   scanTimer = setInterval(scanTick, scanSpeed);
+  hudSet((scanIdx / items.length) * 100, scanSpeed, `${bulkPage + 1}/${Math.max(1, Math.ceil(reviewQueue.length / BATCH))}`);
   syncScanUI();
   toast(`⚡ 开始扫描本批 ${items.length} 张（${scanSpeed < 90 ? '疾速' : scanSpeed < 180 ? '快速' : '舒缓'}）`);
 }
@@ -662,7 +696,24 @@ function stopBulkScan() {
   if (scanTimer) clearInterval(scanTimer);
   scanTimer = null;
   scanOn = false;
+  const stage = stageEl();
+  if (stage) stage.classList.remove('scanning');
+  const led = document.getElementById('hudLed');
+  if (led) { led.classList.remove('on'); led.textContent = '○ READY'; }
   syncScanUI();
+}
+function moveBeam(item) {
+  const beam = beamEl();
+  const stage = stageEl();
+  if (!beam || !stage) return;
+  // 光束移动到当前格中心（相对舞台）
+  const sr = stage.getBoundingClientRect();
+  const ir = item.getBoundingClientRect();
+  const y = ir.top - sr.top + ir.height / 2;
+  beam.style.top = y + 'px';
+  beam.classList.remove('fire');
+  void beam.offsetWidth; // 重触发动画
+  beam.classList.add('fire');
 }
 function scanTick() {
   const items = [...document.querySelectorAll('.bulk-item')];
@@ -673,23 +724,29 @@ function scanTick() {
     if (cur) {
       cur.classList.remove('scanned');
       cur.classList.add('scanning');
+      moveBeam(cur);
       try { cur.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch {}
     }
     if (scanIdx - 1 >= 0 && items[scanIdx - 1]) items[scanIdx - 1].classList.add('scanned');
     scanIdx++;
     const st = document.getElementById('scanStatus');
     if (st) st.textContent = `⚡ 扫描中 ${Math.min(scanIdx, items.length)} / ${items.length}`;
+    hudSet((scanIdx / items.length) * 100, scanSpeed, `${bulkPage + 1}/${Math.max(1, Math.ceil(reviewQueue.length / BATCH))}`);
   } else {
     // 收尾：清除 scanning 态，把最后扫到的格子标记为已扫（变绿）
     items.forEach(el => el.classList.remove('scanning'));
     if (items[items.length - 1]) items[items.length - 1].classList.add('scanned');
     stopBulkScan();
+    hudSet(100, scanSpeed, `${bulkPage + 1}/${Math.max(1, Math.ceil(reviewQueue.length / BATCH))}`);
+    const stage = stageEl();
+    if (stage) { stage.classList.add('done'); setTimeout(() => stage.classList.remove('done'), 900); }
     toast('✅ 本批扫描完成，可点选格子标记通过/淘汰');
   }
 }
 function setScanSpeed(v) {
   scanSpeed = v;
   if (scanOn) { stopBulkScan(); startBulkScan(); }
+  hudSet((scanIdx / Math.max(1, document.querySelectorAll('.bulk-item').length)) * 100, v, `${bulkPage + 1}/${Math.max(1, Math.ceil(reviewQueue.length / BATCH))}`);
 }
 function syncScanUI() {
   const btn = document.getElementById('btnScan');
