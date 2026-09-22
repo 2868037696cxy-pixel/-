@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JEV Creative Studio · 跨境电商素材评分分类工作台</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">JEV</div>
+      <div class="brand-text">
+        <h1>Creative Studio</h1>
+        <span>跨境电商素材评分分类工作台</span>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="statTotal">0</b><span>素材总数</span></div>
+      <div class="stat"><b id="statAvg">0</b><span>平均分</span></div>
+      <div class="stat"><b id="statGo">0</b><span>可投放</span></div>
+      <div class="stat"><b id="statCond">0</b><span>需优化</span></div>
+      <div class="stat"><b id="statNo">0</b><span>不可投</span></div>
+    </div>
+    <div class="top-actions">
+      <button class="btn ghost" id="btnModel">评分模型</button>
+      <button class="btn primary" id="btnAdd">+ 导入素材</button>
+    </div>
+  </header>
+
+  <!-- 工具/筛选条 -->
+  <section class="toolbar">
+    <div class="searchwrap">
+      <input id="searchBox" class="input" placeholder="搜索名称 / 标签 / 备注…">
+    </div>
+    <div class="filters">
+      <select id="filterGrade" class="select"><option value="">全部分级</option></select>
+      <select id="filterMedia" class="select">
+        <option value="">全部类型</option><option value="image">图文</option>
+        <option value="video">视频</option><option value="carousel">轮播</option>
+      </select>
+      <select id="filterVerdict" class="select">
+        <option value="">投放状态(全部)</option><option value="GO">可投放</option>
+        <option value="COND">需优化</option><option value="NO">不可投放</option>
+      </select>
+      <select id="sortBy" class="select">
+        <option value="composite-desc">综合分 高→低</option>
+        <option value="composite-asc">综合分 低→高</option>
+        <option value="updated-desc">最新更新</option>
+        <option value="name-asc">名称 A→Z</option>
+      </select>
+    </div>
+  </section>
+
+  <!-- 素材网格 -->
+  <main id="grid" class="grid"></main>
+  <div id="empty" class="empty hidden">
+    <div class="empty-icon">📦</div>
+    <p>素材库为空</p>
+    <p class="muted">点击右上角「导入素材」开始建立你的素材评分库</p>
+  </div>
+</div>
+
+<!-- 详情抽屉 -->
+<div id="drawerBackdrop" class="drawer-backdrop hidden"></div>
+<aside id="drawer" class="drawer hidden"></aside>
+
+<!-- 导入弹窗 -->
+<div id="modalBackdrop" class="modal-backdrop hidden"></div>
+<div id="modal" class="modal hidden"></div>
+
+<!-- 评分模型弹窗 -->
+<div id="modelModalBackdrop" class="modal-backdrop hidden"></div>
+<div id="modelModal" class="modal model-modal hidden"></div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>
