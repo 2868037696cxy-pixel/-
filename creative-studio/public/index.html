@@ -181,6 +181,9 @@
         </div>
       </section>
 
+      <!-- AI 扫描控制台（内嵌表面面板 · 非弹窗） -->
+      <section id="aiConsole" class="ai-console hidden" aria-live="polite"></section>
+
       <div class="workspace">
         <!-- 左：主视觉素材阵列 -->
         <div class="ws-left">
@@ -239,10 +242,6 @@
 <!-- 评分模型弹窗 -->
 <div id="modelModalBackdrop" class="modal-backdrop hidden"></div>
 <div id="modelModal" class="modal model-modal hidden"></div>
-
-<!-- AI 审核弹窗 -->
-<div id="aiModalBackdrop" class="modal-backdrop hidden"></div>
-<div id="aiModal" class="modal ai-modal hidden"></div>
 
 <div id="toast" class="toast hidden"></div>
 <script src="app.js"></script>

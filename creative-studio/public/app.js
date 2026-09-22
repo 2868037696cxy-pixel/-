@@ -1606,21 +1606,40 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.rem
 let aiRunBusy = false;
 let aiStop = false;
 function openAIReview() {
-  $('aiModalBackdrop').classList.remove('hidden');
-  $('aiModal').classList.remove('hidden');
-  renderAIRefresh();
+  const el = $('aiConsole');
+  if (el.classList.contains('hidden')) {
+    el.classList.remove('hidden');
+    renderAIRefresh();
+  } else {
+    closeAIReview();
+  }
 }
-function closeAIReview() { $('aiModalBackdrop').classList.add('hidden'); $('aiModal').classList.add('hidden'); }
+function closeAIReview() { $('aiConsole').classList.add('hidden'); }
 
 // 扫描队列瓦片
 function aiTileHTML(m) {
   const src = thumbOf(m);
-  const img = src ? `<img src="${src}" loading="lazy" alt="">` : '<span style="font-size:18px">🗂️</span>';
+  const img = src ? `<img src="${src}" loading="lazy" alt="" onerror="this.style.opacity='0'">` : '<span style="font-size:18px">🗂️</span>';
   return `<div class="ai-tile" data-id="${m.id}" title="${esc(m.name)} · ${fmt(m.analysis.composite)} 分">
     ${img}
     <span class="bulk-score badge-${effGrade(m)}">${fmt(m.analysis.composite)}</span>
     <span class="ai-rec" data-rec=""></span>
     <span class="scan-light"></span>
+  </div>`;
+}
+
+// 进度清单行（扫描时逐条点亮；finished=直接渲染完成态）
+function aiRowHTML(m, i, finished) {
+  const src = thumbOf(m);
+  const thumb = src ? `<img class="ail-thumb" src="${src}" loading="lazy" alt="" onerror="this.style.opacity='0'">` : '<span class="ail-thumb ail-noimg">🗂️</span>';
+  const rec = m.analysis.aiRecommendation;
+  const vTxt = rec === 'keep' ? 'PASS 过' : rec === 'reject' ? 'KILL 汰' : 'HOLD 核';
+  return `<div class="ail-row${finished ? ' done' : ''}" data-id="${m.id}">
+    <span class="ail-idx">${String(i + 1).padStart(2, '0')}</span>
+    ${thumb}
+    <span class="ail-name" title="${esc(m.name)}">${esc(m.name)}</span>
+    <span class="ail-verdict${finished ? ` show ${rec || 'review'}` : ''}" data-v>${finished ? vTxt : ''}</span>
+    <span class="ail-state" data-s>${finished ? 'DONE' : 'QUEUED'}</span>
   </div>`;
 }
 
@@ -1634,44 +1653,60 @@ function renderAIRefresh() {
     reject: MATERIALS.filter(m => m.analysis.aiRecommendation === 'reject').length
   };
   const todoIds = MATERIALS.filter(m => !m.analysis.aiAssessed).map(m => m.id);
+  const lastBatch = (!todoIds.length && window.__aiLastBatch?.ids?.length) ? window.__aiLastBatch : null;
+  const listIds = todoIds.length ? todoIds : (lastBatch ? lastBatch.ids : []);
+  const finishedMode = !todoIds.length && !!lastBatch;
   const tiles = todoIds.map(id => aiTileHTML(MATERIALS.find(m => m.id === id))).join('');
+  const rows = listIds.map((id, i) => MATERIALS.find(m => m.id === id)).filter(Boolean).map((m, i) => aiRowHTML(m, i, finishedMode)).join('');
   const noAi = !(MODEL.ai || {}).available;
+  const pct = total ? Math.round(assessed / total * 100) : 0;
   const queueArea = todoIds.length
     ? `<div class="ai-scan-stage" id="aiScanStage">
         <div class="ai-scan-grid" id="aiScanGrid">${tiles}</div>
         <div class="scan-beam" id="aiScanBeam"></div>
       </div>`
     : `<div class="ai-scan-done">✅ 全部素材已完成 AI 评测${noAi ? '（本地启发式）' : ''}</div>`;
-  $('aiModal').innerHTML = `
-    <h2>✦ TypeSafe AI 审核</h2>
-    <div class="sub">调用 Jev 模型对素材做全量结构化评测：J/E/V 三维打分、Hook/出镜/场景分类、合规风险判定，并给出 通过/复核/淘汰 建议。审核结果会自动回填评分与标签。${noAi ? '<br><b style="color:var(--warn)">未配置 TYPESAFE_API_KEY，当前使用本地启发式评测。</b>' : ''}</div>
-    <div class="ai-stats">
-      <div class="ai-stat"><b>${total}</b><span>素材总数</span></div>
-      <div class="ai-stat"><b>${assessed}</b><span>已审核</span></div>
-      <div class="ai-stat"><b>${todo}</b><span>待审核</span></div>
-    </div>
-    <div class="ai-stats">
-      <div class="ai-stat" style="border-color:var(--ok)"><b style="color:var(--ok)">${recCount.keep}</b><span>建议通过</span></div>
-      <div class="ai-stat" style="border-color:var(--warn)"><b style="color:var(--warn)">${recCount.review}</b><span>建议复核</span></div>
-      <div class="ai-stat" style="border-color:var(--err)"><b style="color:var(--err)">${recCount.reject}</b><span>建议淘汰</span></div>
-    </div>
-    <div class="ai-progress"><i id="aiProgFill" style="width:${total ? (assessed / total) * 100 : 0}%"></i></div>
-    <div class="subtle" id="aiProgText">已完成 ${assessed} / ${total} 张</div>
-    <div class="ai-scan-wrap">
-      <div class="ai-scan-hud">
-        <span class="hud-led" id="aiHudLed">○</span><b class="hud-name">SCAN.QUEUE</b>
-        <span class="hud-right"><b id="aiHudPct">${total ? Math.round(assessed / total * 100) : 0}%</b><span class="hud-sep">·</span><span id="aiHudDone">${assessed}/${total}</span></span>
+  $('aiConsole').innerHTML = `
+    <div class="aicon-head">
+      <span class="hud-led${aiRunBusy ? ' on' : ''}" id="aiHudLed">${aiRunBusy ? '◉' : '○'}</span>
+      <div class="aicon-title">
+        <b>✦ TypeSafe AI 审核台</b>
+        <span class="hud-name">SCAN.CONSOLE${noAi ? ' · LOCAL.HEURISTIC' : ''}</span>
       </div>
-      ${queueArea}
+      <div class="aicon-statline">
+        <span class="aicon-mini"><b>${total}</b>总数</span>
+        <span class="aicon-mini"><b>${assessed}</b>已审</span>
+        <span class="aicon-mini warn"><b>${todo}</b>待审</span>
+        <span class="aicon-mini ok"><b>${recCount.keep}</b>过</span>
+        <span class="aicon-mini review"><b>${recCount.review}</b>核</span>
+        <span class="aicon-mini reject"><b>${recCount.reject}</b>汰</span>
+      </div>
+      <button class="aicon-close" onclick="closeAIReview()" title="收起控制台（扫描中收起不中断）">✕</button>
     </div>
-    <div class="ai-result" id="aiResult"></div>
-    <div class="import-actions">
-      <button class="btn primary scan-switch" id="btnAIGo" onclick="runAIBatch()">
-        <i class="sw-track"><i class="sw-knob"></i></i>
-        <span class="sw-label" id="swLabel">⚡ 启动扫描</span>
-        <span class="sw-count" id="swCount">${todoIds.length} 张待扫</span>
+    <div class="aicon-progressrow">
+      <div class="ai-progress"><i id="aiProgFill" style="width:${total ? (assessed / total) * 100 : 0}%"></i></div>
+      <b class="aicon-pct" id="aiHudPct">${pct}%</b>
+      <span class="aicon-count" id="aiHudDone">${assessed}/${total}</span>
+    </div>
+    ${noAi ? '<div class="aicon-note">⚠ 未配置 TYPESAFE_API_KEY · 当前使用本地启发式评测</div>' : ''}
+    <div class="aicon-body">
+      <div class="aicon-queue">
+        <div class="aicon-colhead"><b class="hud-name">SCAN.QUEUE</b><span class="aicon-listsub">待扫队列 · 逐格扫描</span></div>
+        ${queueArea}
+      </div>
+      <div class="aicon-listwrap">
+        <div class="aicon-colhead"><b class="hud-name">PROGRESS.LOG</b><span class="aicon-listsub">${finishedMode ? '本轮扫描结果' : '扫描进度清单'}</span><span class="hud-right"><b id="aiListDone">${finishedMode ? (lastBatch.done || listIds.length) : 0}</b><span class="hud-sep">/</span><span>${listIds.length}</span></span></div>
+        <div class="aicon-list" id="aiList">${rows || '<div class="ail-empty">队列为空 · 无待审素材</div>'}</div>
+      </div>
+    </div>
+    <div class="aicon-foot">
+      <button class="ai-launch" id="btnAIGo" onclick="runAIBatch()">
+        <i class="al-led"></i>
+        <span class="al-main" id="swLabel">LAUNCH SCAN · 启动扫描</span>
+        <span class="al-count" id="swCount">${todoIds.length} QUEUED</span>
+        <span class="al-arrow">▶</span>
       </button>
-      <button class="btn ghost" onclick="closeAIReview()">关闭</button>
+      <div class="ai-result" id="aiResult"></div>
     </div>`;
   window.__aiTodoIds = todoIds;
   syncAISwitch();
@@ -1680,13 +1715,16 @@ function renderAIRefresh() {
 function syncAISwitch() {
   const btn = $('btnAIGo');
   if (!btn) return;
-  btn.classList.toggle('on', aiRunBusy);
+  const remain = (window.__aiTodoIds || []).length;
   btn.classList.toggle('busy', aiRunBusy);
-  btn.disabled = aiRunBusy ? false : !(window.__aiTodoIds || []).length;
+  btn.classList.toggle('done', !aiRunBusy && !remain);
+  btn.disabled = !aiRunBusy && !remain;
   const lbl = $('swLabel');
-  if (lbl) lbl.textContent = aiRunBusy ? '⏸ 点击停止' : ((window.__aiTodoIds || []).length ? '⚡ 启动扫描' : '✅ 已全部完成');
+  if (lbl) lbl.textContent = aiRunBusy ? 'STOP · 停止扫描' : (remain ? 'LAUNCH SCAN · 启动扫描' : 'ALL DONE · 已全部完成');
   const cnt = $('swCount');
-  if (cnt) cnt.textContent = (window.__aiTodoIds || []).length + ' 张待扫';
+  if (cnt) cnt.textContent = aiRunBusy ? `${window.__aiDone || 0}/${window.__aiTotal || 0} RUNNING` : `${remain} QUEUED`;
+  const arrow = btn.querySelector('.al-arrow');
+  if (arrow) arrow.style.display = aiRunBusy ? 'none' : '';
 }
 
 async function runAIBatch() {
@@ -1695,6 +1733,7 @@ async function runAIBatch() {
   if (!ids.length) return toast('没有待审核素材');
   aiRunBusy = true; aiStop = false;
   const total = ids.length;
+  window.__aiDone = 0; window.__aiTotal = total;
   const concurrency = Math.max(1, Math.min(4, Math.ceil(total / 20)));
   const chunks = [];
   for (let i = 0; i < ids.length; i += 10) chunks.push(ids.slice(i, i + 10));
@@ -1705,6 +1744,7 @@ async function runAIBatch() {
   const stage = $('aiScanStage');
   const grid = $('aiScanGrid');
   const beam = $('aiScanBeam');
+  const listEl = $('aiList');
   if (stage) stage.classList.add('scanning');
   if (led) { led.classList.add('on'); led.textContent = '◉'; }
   syncAISwitch();
@@ -1713,6 +1753,7 @@ async function runAIBatch() {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const reveal = async (id, rec) => {
     const item = grid ? grid.querySelector(`.ai-tile[data-id="${id}"]`) : null;
+    const row = listEl ? listEl.querySelector(`.ail-row[data-id="${id}"]`) : null;
     if (item && grid && stage && beam) {
       const sr = stage.getBoundingClientRect();
       const ir = item.getBoundingClientRect();
@@ -1724,6 +1765,12 @@ async function runAIBatch() {
       grid.querySelectorAll('.ai-tile.scanning').forEach(el => el.classList.remove('scanning'));
       item.classList.add('scanning');
     }
+    if (row) {
+      listEl.querySelectorAll('.ail-row.active').forEach(el => el.classList.remove('active'));
+      row.classList.add('active');
+      const st = row.querySelector('[data-s]'); if (st) st.textContent = 'SCANNING';
+      try { row.scrollIntoView({ block: 'nearest' }); } catch {}
+    }
     await sleep(130);
     if (item) {
       item.classList.remove('scanning');
@@ -1733,12 +1780,22 @@ async function runAIBatch() {
       const recEl = item.querySelector('.ai-rec');
       if (recEl) { recEl.textContent = rec === 'keep' ? '过' : rec === 'reject' ? '汰' : '核'; recEl.className = 'ai-rec show ' + (rec || 'review'); }
     }
+    if (row) {
+      row.classList.remove('active');
+      row.classList.add('done');
+      const st = row.querySelector('[data-s]'); if (st) st.textContent = 'DONE';
+      const v = row.querySelector('[data-v]');
+      if (v) { v.textContent = rec === 'keep' ? 'PASS 过' : rec === 'reject' ? 'KILL 汰' : 'HOLD 核'; v.className = 'ail-verdict show ' + (rec || 'review'); }
+    }
     done++;
     const pct = Math.round((done / total) * 100);
     if (fill) fill.style.width = pct + '%';
     if (txt) txt.textContent = `已扫描 ${done} / ${total} 张${failedN ? ' · 失败 ' + failedN : ''}`;
     const hp = $('aiHudPct'); if (hp) hp.textContent = pct + '%';
     const hd = $('aiHudDone'); if (hd) hd.textContent = `${done}/${total}`;
+    const ld = $('aiListDone'); if (ld) ld.textContent = done;
+    const sc = $('swCount'); if (sc) sc.textContent = `${done}/${total} RUNNING`;
+    window.__aiDone = done;
   };
   for (let i = 0; i < chunks.length && !aiStop; i++) {
     let r;
@@ -1768,6 +1825,7 @@ async function runAIBatch() {
     : failedN
       ? `扫描完成：成功 ${done}，失败 ${failedN}`
       : `✅ 扫描完成：${done} 张素材已完成 AI 评测`;
+  window.__aiLastBatch = { ids: chunks.flat(), done };
   renderAIRefresh();
   syncAISwitch();
   const re = $('aiResult');
@@ -1783,7 +1841,6 @@ $('btnAIAll').onclick = openAIReview;
 $('drawerBackdrop').onclick = closeDrawer;
 $('modalBackdrop').onclick = closeModal;
 $('modelModalBackdrop').onclick = closeModel;
-$('aiModalBackdrop').onclick = closeAIReview;
 
 // 筛选面板折叠
 let filterCollapsed = false;
