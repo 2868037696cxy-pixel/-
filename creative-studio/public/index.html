@@ -14,7 +14,7 @@
       <div class="logo">JEV</div>
       <div class="brand-text">
         <h1>Creative Workbench</h1>
-        <span>跨境电商素材评分分类工作台 · J/E/V 黄金三维引擎</span>
+        <span>跨境电商素材评分分类工作台 · 看素材 / 筛素材 / 评素材</span>
       </div>
     </div>
     <div class="stats">
@@ -31,60 +31,86 @@
     </div>
   </header>
 
-  <!-- 视图切换 + 筛选 -->
-  <section class="toolbar">
-    <div class="viewtabs">
-      <button class="vtab active" data-view="grid" onclick="setView('grid')">素材大盘</button>
-      <button class="vtab" data-view="kanban" onclick="setView('kanban')">动态看板</button>
-      <select id="boardBy" class="select boardby hidden" onchange="setBoardBy(this.value)">
-        <option value="grade">按评级 S/A/B/C/D</option>
-        <option value="channel">按投放渠道</option>
-        <option value="hook">按 Hook 类型</option>
-      </select>
+  <div class="layout">
+    <!-- 左侧：可视化筛选面板 -->
+    <aside class="fpanel" id="fpanel">
+      <div class="fpanel-head">
+        <b>🔍 筛选素材</b>
+        <button class="tcloud-clear" id="fClear">清空</button>
+      </div>
+      <div class="fsearch"><input id="searchBox" class="input" placeholder="搜索名称 / 标签 / 痛点…"></div>
+
+      <div class="fgroup">
+        <label>评级</label>
+        <div class="chips" id="fGrades"></div>
+      </div>
+      <div class="fgroup">
+        <label>得分区间</label>
+        <div class="range-inputs">
+          <input id="fMin" type="number" min="0" max="100" placeholder="0">
+          <span>—</span>
+          <input id="fMax" type="number" min="0" max="100" placeholder="100">
+        </div>
+      </div>
+      <div class="fgroup">
+        <label>素材类型</label>
+        <div class="checks" id="fMedia"></div>
+      </div>
+      <div class="fgroup">
+        <label>渠道可投（多选 = 或）</label>
+        <div class="checks" id="fChannels"></div>
+      </div>
+      <div class="fgroup">
+        <label>仅看风险素材</label>
+        <label class="check-row"><input type="checkbox" id="fRiskOnly" style="width:auto"><span class="cr-label">⚠ 只显示命中合规风险的素材</span></label>
+      </div>
+      <div class="fgroup">
+        <label>出镜类型</label>
+        <div class="checks" id="fActors"></div>
+      </div>
+      <div class="fgroup">
+        <label>Hook 类型</label>
+        <div class="checks scroll" id="fHooks"></div>
+      </div>
+      <div class="fgroup">
+        <label>标签（点击多选）</label>
+        <div class="checks scroll tags" id="fTags"></div>
+      </div>
+
+      <div class="fpanel-foot">
+        <span id="fSummary">当前未筛选</span>
+      </div>
+    </aside>
+
+    <!-- 右侧：浏览区 -->
+    <div class="maincol">
+      <section class="results-bar">
+        <div class="hitinfo">命中 <b id="hitCount">0</b> / 共 <b id="totalCount">0</b> 个素材</div>
+        <div class="viewtabs">
+          <button class="vtab active" data-view="grid" onclick="setView('grid')">素材墙</button>
+          <button class="vtab" data-view="kanban" onclick="setView('kanban')">分类看板</button>
+          <select id="boardBy" class="select boardby hidden" onchange="setBoardBy(this.value)">
+            <option value="grade">按评级 S/A/B/C/D</option>
+            <option value="channel">按投放渠道</option>
+            <option value="hook">按 Hook 类型</option>
+          </select>
+        </div>
+        <select id="sortBy" class="select">
+          <option value="composite-desc">综合分 高→低</option>
+          <option value="composite-asc">综合分 低→高</option>
+          <option value="updated-desc">最新更新</option>
+          <option value="name-asc">名称 A→Z</option>
+        </select>
+      </section>
+
+      <main id="grid" class="grid"></main>
+      <main id="kanban" class="kanban hidden"></main>
+      <div id="empty" class="empty hidden">
+        <div class="empty-icon">🔍</div>
+        <p id="emptyText">没有符合条件的素材</p>
+        <p class="muted">试试调整左侧筛选条件，或点击右上角「导入素材」建立素材库</p>
+      </div>
     </div>
-    <div class="searchwrap"><input id="searchBox" class="input" placeholder="搜索名称 / 标签 / 痛点 / 备注…"></div>
-    <div class="filters">
-      <select id="fGrade" class="select"><option value="">全部分级</option></select>
-      <select id="fChannel" class="select">
-        <option value="">渠道:全部</option>
-        <option value="google">Google 可投</option>
-        <option value="meta">Meta 可投</option>
-        <option value="tiktok">TikTok 可投</option>
-      </select>
-      <select id="fMedia" class="select">
-        <option value="">类型:全部</option><option value="video">视频</option><option value="image">单图</option>
-      </select>
-      <select id="fActor" class="select"><option value="">出镜:全部</option></select>
-      <select id="fRange" class="select">
-        <option value="">得分:全部</option>
-        <option value="90-100">90-100</option><option value="80-89">80-89</option>
-        <option value="70-79">70-79</option><option value="55-69">55-69</option><option value="0-54">0-54</option>
-      </select>
-      <select id="sortBy" class="select">
-        <option value="composite-desc">综合分 高→低</option>
-        <option value="composite-asc">综合分 低→高</option>
-        <option value="updated-desc">最新更新</option>
-        <option value="name-asc">名称 A→Z</option>
-      </select>
-    </div>
-  </section>
-
-  <!-- 标签云 -->
-  <section id="tagCloudBar" class="tagcloud-bar">
-    <span class="tclabel">标签图谱</span>
-    <div id="tagCloud" class="tagcloud"></div>
-  </section>
-
-  <!-- 素材大盘 -->
-  <main id="grid" class="grid"></main>
-
-  <!-- 动态看板 -->
-  <main id="kanban" class="kanban hidden"></main>
-
-  <div id="empty" class="empty hidden">
-    <div class="empty-icon">📦</div>
-    <p>素材库为空</p>
-    <p class="muted">点击右上角「导入素材」：本地上传 / 扫描本地文件夹 / 粘贴链接</p>
   </div>
 </div>
 

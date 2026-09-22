@@ -1,5 +1,5 @@
 // =============================================================
-// JEV Creative Workbench · 前端逻辑
+// JEV Creative Workbench · 前端逻辑（看素材 / 筛素材 / 评素材）
 // =============================================================
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -10,8 +10,20 @@ let MODEL = null;   // {weights, labels, enums, policyRules, grades, ai, caps}
 let view = 'grid';
 let boardBy = 'grade';
 let selectedId = null;
-const f = { q: '', grade: '', channel: '', media: '', actor: '', range: '', tags: new Set() };
 let sortBy = 'composite-desc';
+
+// -------- 筛选状态（全部可视化在左侧面板） --------
+const F = {
+  q: '',
+  grades: new Set(),    // S/A/B/C/D 多选
+  media: new Set(),     // video/image
+  channels: new Set(),  // google/meta/tiktok（可投=GO）
+  actors: new Set(),
+  hooks: new Set(),
+  tags: new Set(),
+  minScore: 0, maxScore: 100,
+  riskOnly: false
+};
 
 const GCOLOR = { S: '#10b981', A: '#22c55e', B: '#0ea5e9', C: '#f59e0b', D: '#ef4444' };
 const CH_ICON = { google: 'G', meta: 'M', tiktok: 'T' };
@@ -45,8 +57,8 @@ function clPlatforms(m, risks) {
   const P = clPolicyScore(risks), nat = clNative(a);
   const critical = risks.filter(r => r.level === 'critical'), warning = risks.filter(r => r.level === 'warning');
   const mk = (pw) => {
-    let raw = j * pw.hook + e * pw.engagement + v * pw.value + P * pw.policy + (pw.native ? nat * pw.native : 0);
-    let wsum = pw.hook + pw.engagement + pw.value + pw.policy + (pw.native || 0);
+    const raw = j * pw.hook + e * pw.engagement + v * pw.value + P * pw.policy + (pw.native ? nat * pw.native : 0);
+    const wsum = pw.hook + pw.engagement + pw.value + pw.policy + (pw.native || 0);
     let fit = fmt(raw / wsum * 10);
     const reasons = [];
     const asp = basic.aspect;
@@ -62,7 +74,6 @@ function clPlatforms(m, risks) {
     for (const rw of warning) if (verdict === 'GO') verdict = 'COND';
     return { fit, verdict, reasons };
   };
-  // 区分公式：meta/tiktok 带 native,google 不带 → 用 hash 判断
   const g = mk({ hook: w.google.hook, engagement: w.google.engagement, value: w.google.value, policy: w.google.policy });
   const meta = mk({ hook: w.meta.hook, engagement: w.meta.engagement, value: w.meta.value, policy: w.meta.policy, native: 0.34 });
   const tiktok = mk({ hook: w.tiktok.hook, engagement: w.tiktok.engagement, value: w.tiktok.value, policy: w.tiktok.policy, native: w.tiktok.native });
@@ -76,12 +87,7 @@ async function loadData() {
     fetch('/api/model').then(r => r.json())
   ]);
   MATERIALS = mats; MODEL = mod;
-  initSelects();
   render();
-}
-function initSelects() {
-  $('fGrade').innerHTML = '<option value="">全部分级</option>' + MODEL.grades.map(g => `<option value="${g.grade}">${g.grade} 级 · ${g.label}</option>`).join('');
-  $('fActor').innerHTML = '<option value="">出镜:全部</option>' + MODEL.enums.actor.map(x => `<option>${x}</option>`).join('');
 }
 
 const effGrade = m => m.custom?.manualGrade || m.analysis.grade;
@@ -101,18 +107,25 @@ const flatTags = m => [...(m.analysis.tags?.basic || []), ...(m.analysis.tags?.c
 const policyRiskCount = m => (m.analysis.policy?.risks || []).length;
 
 // ---------------- 筛选 ----------------
+function hasFilter() {
+  return F.q || F.grades.size || F.media.size || F.channels.size || F.actors.size || F.hooks.size || F.tags.size ||
+    F.riskOnly || F.minScore > 0 || F.maxScore < 100;
+}
 function filtered() {
-  const q = f.q.trim().toLowerCase();
+  const q = F.q.trim().toLowerCase();
   return MATERIALS.filter(m => {
-    if (f.grade && effGrade(m) !== f.grade) return false;
-    if (f.channel && m.analysis.platforms?.[f.channel]?.verdict !== 'GO') return false;
-    if (f.media && m.basic.mediaType !== f.media) return false;
-    if (f.actor && m.analysis.engagement?.actor !== f.actor) return false;
-    if (f.range) {
-      const [lo, hi] = f.range.split('-').map(Number);
-      if (m.analysis.composite < lo || m.analysis.composite > hi) return false;
+    if (F.grades.size && !F.grades.has(effGrade(m))) return false;
+    if (F.media.size && !F.media.has(m.basic.mediaType)) return false;
+    if (F.actors.size && !F.actors.has(m.analysis.engagement?.actor || '')) return false;
+    if (F.hooks.size && !F.hooks.has(m.analysis.hook?.hookType || '无明确钩子')) return false;
+    if (F.channels.size && ![...F.channels].some(k => m.analysis.platforms?.[k]?.verdict === 'GO')) return false;
+    if (F.riskOnly && !policyRiskCount(m)) return false;
+    const sc = m.analysis.composite;
+    if (sc < F.minScore || sc > F.maxScore) return false;
+    if (F.tags.size) {
+      const tt = new Set(flatTags(m));
+      for (const t of F.tags) if (!tt.has(t)) return false;
     }
-    for (const t of f.tags) if (!flatTags(m).includes(t)) return false;
     if (q) {
       const hay = (m.name + ' ' + flatTags(m).join(' ') + ' ' + (m.analysis.engagement?.painPoint || '') + ' ' + (m.custom?.notes || '')).toLowerCase();
       if (!hay.includes(q)) return false;
@@ -127,10 +140,82 @@ function filtered() {
   });
 }
 
+// ---------------- 左侧筛选面板 ----------------
+function countBy(fn) {
+  const c = {};
+  for (const m of MATERIALS) { const k = fn(m); if (k) c[k] = (c[k] || 0) + 1; }
+  return c;
+}
+function togF(key, val) {
+  const s = F[key];
+  if (s.has(val)) s.delete(val); else s.add(val);
+  renderPanel(); renderMain();
+}
+function setF(key, val, on) {
+  const s = F[key];
+  if (on) s.add(val); else s.delete(val);
+  renderPanel(); renderMain();
+}
+function renderPanel() {
+  // 评级胶囊
+  $('fGrades').innerHTML = MODEL.grades.map(g => {
+    const n = MATERIALS.filter(m => effGrade(m) === g.grade).length;
+    return `<span class="fchip ${F.grades.has(g.grade) ? 'on' : ''}" onclick="togF('grades','${g.grade}')"><i class="gdot" style="background:${GCOLOR[g.grade]}"></i>${g.grade} · ${g.label}<small>${n}</small></span>`;
+  }).join('');
+
+  // 素材类型
+  const mediaCount = countBy(m => m.basic.mediaType);
+  $('fMedia').innerHTML = [['video', '🎬 视频'], ['image', '🖼️ 单图']].map(([k, l]) =>
+    `<label><input type="checkbox" ${F.media.has(k) ? 'checked' : ''} onchange="setF('media','${k}',this.checked)">${l}<span class="cnt">${mediaCount[k] || 0}</span></label>`).join('');
+
+  // 渠道可投
+  const chCount = {};
+  for (const k of ['google', 'meta', 'tiktok']) chCount[k] = MATERIALS.filter(m => m.analysis.platforms?.[k]?.verdict === 'GO').length;
+  $('fChannels').innerHTML = [['google', 'Google Ads 可投'], ['meta', 'Meta/FB 可投'], ['tiktok', 'TikTok 可投']].map(([k, l]) =>
+    `<label><input type="checkbox" ${F.channels.has(k) ? 'checked' : ''} onchange="setF('channels','${k}',this.checked)">${l}<span class="cnt">${chCount[k] || 0}</span></label>`).join('');
+
+  // 出镜类型
+  const actCount = countBy(m => m.analysis.engagement?.actor);
+  $('fActors').innerHTML = MODEL.enums.actor.map(a =>
+    `<label><input type="checkbox" ${F.actors.has(a) ? 'checked' : ''} onchange="setF('actors','${esc(a).replace(/'/g, "\\'")}',this.checked)">${a}<span class="cnt">${actCount[a] || 0}</span></label>`).join('');
+
+  // Hook 类型
+  const hookCount = countBy(m => m.analysis.hook?.hookType);
+  $('fHooks').innerHTML = MODEL.enums.hookType.map(h =>
+    `<label><input type="checkbox" ${F.hooks.has(h) ? 'checked' : ''} onchange="setF('hooks','${esc(h).replace(/'/g, "\\'")}',this.checked)">${h}<span class="cnt">${hookCount[h] || 0}</span></label>`).join('');
+
+  // 标签 Top 24
+  const tagCount = {};
+  for (const m of MATERIALS) for (const t of flatTags(m)) tagCount[t] = (tagCount[t] || 0) + 1;
+  const top = Object.entries(tagCount).sort((a, b) => b[1] - a[1]).slice(0, 24);
+  $('fTags').innerHTML = top.map(([t, c]) =>
+    `<label><input type="checkbox" ${F.tags.has(t) ? 'checked' : ''} onchange="setF('tags',decodeURIComponent('${encodeURIComponent(t)}'),this.checked)">${esc(t)}<span class="cnt">${c}</span></label>`).join('')
+    || '<div class="subtle">素材入库后自动生成标签</div>';
+
+  // 汇总
+  const parts = [];
+  if (F.q) parts.push(`搜索“${F.q}”`);
+  if (F.grades.size) parts.push('评级 ' + [...F.grades].join('/'));
+  if (F.media.size) parts.push([...F.media].map(x => x === 'video' ? '视频' : '单图').join('/'));
+  if (F.channels.size) parts.push([...F.channels].map(k => CH_NAME[k]).join('或') + ' 可投');
+  if (F.actors.size) parts.push('出镜 ' + [...F.actors].join('/'));
+  if (F.hooks.size) parts.push('Hook ' + [...F.hooks].join('/'));
+  if (F.tags.size) parts.push('标签×' + F.tags.size);
+  if (F.riskOnly) parts.push('仅风险素材');
+  if (F.minScore > 0 || F.maxScore < 100) parts.push(`${F.minScore}-${F.maxScore} 分`);
+  $('fSummary').innerHTML = parts.length ? `已选 <b>${parts.length}</b> 项：${parts.join(' · ')}` : '当前未筛选（显示全部素材）';
+}
+function clearFilters() {
+  F.q = ''; F.grades.clear(); F.media.clear(); F.channels.clear();
+  F.actors.clear(); F.hooks.clear(); F.tags.clear();
+  F.minScore = 0; F.maxScore = 100; F.riskOnly = false;
+  $('searchBox').value = ''; $('fMin').value = ''; $('fMax').value = ''; $('fRiskOnly').checked = false;
+  renderPanel(); renderStats(); renderMain();
+}
+
 // ---------------- 渲染 ----------------
 function render() {
-  renderStats(); renderTagCloud();
-  if (view === 'grid') renderGrid(); else renderKanban();
+  renderStats(); renderPanel(); renderMain();
 }
 function renderStats() {
   const n = MATERIALS.length;
@@ -140,7 +225,7 @@ function renderStats() {
   $('statRisk').textContent = MATERIALS.filter(m => policyRiskCount(m) > 0).length;
   $('statGo').textContent = MATERIALS.filter(m => ['google', 'meta', 'tiktok'].some(k => m.analysis.platforms?.[k]?.verdict === 'GO')).length;
 }
-function thumbOf(m, forKanban = false) {
+function thumbOf(m) {
   if (m.kind === 'url' && /^(https?:)?\/\//.test(m.ref || '')) return m.ref;
   if (m.kind !== 'url') {
     if (m.basic?.mediaType === 'video') return m.basic.poster || m.ref;
@@ -154,12 +239,11 @@ function cardHTML(m) {
   const a = m.analysis;
   const plats = ['google', 'meta', 'tiktok'].map(k => a.platforms?.[k]).filter(Boolean);
   const tagList = [...(a.tags?.advice || []).slice(0, 1), ...(a.tags?.strategy || []).slice(0, 2), ...(a.tags?.content || []).slice(0, 2)];
-  const mediaEl = !src ? `<div style="height:100%;display:flex;align-items:center;justify-content:center;font-size:44px">${a?.engagement?.beforeAfter ? '📷' : '🗂️'}</div>`
+  const mediaEl = !src ? `<div style="height:100%;display:flex;align-items:center;justify-content:center;font-size:44px">🗂️</div>`
     : m.basic.mediaType === 'video'
       ? `<video src="${m.ref}" poster="${m.basic.poster || ''}" muted loop preload="metadata" onmouseenter="this.play()" onmouseleave="this.pause();this.currentTime=0"></video>`
       : `<img src="${src}" loading="lazy" alt="">`;
-  const vChip = (p, k) => `<span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}" title="${esc(p.reasons.join('；'))}"><i>${CH_ICON[k]}</i>${fmt(p.fit)}</span>`;
-  const riskCls = policyRiskCount(m) ? 'risk' : '';
+  const vChip = (p, k) => `<span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}" title="${esc((p.reasons || []).join('；'))}"><i>${CH_ICON[k]}</i>${fmt(p.fit)}</span>`;
   return `<article class="card" data-id="${m.id}" draggable="true" onclick="openDrawer('${m.id}')">
     <div class="thumb">${mediaEl}
       <div class="score-badge ${g}"><b>${fmt(a.composite)}</b><span>分</span></div>
@@ -176,17 +260,24 @@ function cardHTML(m) {
       <div class="tags">${tagList.map(t => `<span class="tag ${/风险|违禁/.test(t) ? 'risk' : /建议/.test(t) ? 'advice' : ''}">${esc(t)}</span>`).join('')}</div>
       <div class="card-foot">
         <span>${m.basic.mediaType === 'video' ? '🎬 视频' : '🖼️ 单图'}${a.engagement?.actor ? ' · ' + esc(a.engagement.actor) : ''}</span>
-        <span class="${riskCls}">${policyRiskCount(m) ? '⚠ ' + policyRiskCount(m) + ' 风险' : timeAgo(m.updatedAt)}</span>
+        <span>${policyRiskCount(m) ? '⚠ ' + policyRiskCount(m) + ' 风险' : timeAgo(m.updatedAt)}</span>
       </div>
     </div>
   </article>`;
 }
-function renderGrid() {
+function renderMain() {
   const list = filtered();
-  $('grid').innerHTML = list.map(cardHTML).join('');
+  $('hitCount').textContent = list.length;
+  $('totalCount').textContent = MATERIALS.length;
+  const none = list.length === 0;
+  $('empty').classList.toggle('hidden', !none);
+  $('emptyText').textContent = MATERIALS.length === 0 ? '素材库为空' : '没有符合条件的素材';
+  if (view === 'grid') renderGrid(list); else renderKanban(list);
+}
+function renderGrid(list) {
   $('kanban').classList.add('hidden');
   $('grid').classList.remove('hidden');
-  $('empty').classList.toggle('hidden', list.length > 0);
+  $('grid').innerHTML = list.map(cardHTML).join('');
 }
 function timeAgo(t) {
   const s = (Date.now() - t) / 1000;
@@ -195,37 +286,14 @@ function timeAgo(t) {
   return Math.floor(s / 86400) + '天前';
 }
 
-// ---------------- 标签云 ----------------
-function renderTagCloud() {
-  const counts = {};
-  for (const m of MATERIALS) for (const t of flatTags(m)) counts[t] = (counts[t] || 0) + 1;
-  const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 24);
-  const html = top.map(([t, c]) =>
-    `<span class="tcloud-tag ${f.tags.has(t) ? 'active' : ''}" data-tag="${esc(t)}" onclick="toggleTag('${esc(t).replace(/'/g, "\\'")}')">${esc(t)}<b>${c}</b></span>`
-  ).join('');
-  $('tagCloud').innerHTML = html || '<span class="subtle">入库素材后自动生成标签图谱</span>';
-  let clear = document.getElementById('tagClear');
-  if (f.tags.size && !clear) {
-    const b = document.createElement('button');
-    b.id = 'tagClear'; b.className = 'tcloud-clear'; b.textContent = '✕ 清除标签筛选'; b.onclick = () => { f.tags.clear(); renderTagCloud(); renderMain(); };
-    $('tagCloudBar').appendChild(b);
-  } else if (clear && !f.tags.size) clear.remove();
-}
-function toggleTag(t) {
-  if (f.tags.has(t)) f.tags.delete(t); else f.tags.add(t);
-  renderTagCloud(); renderMain();
-}
-function renderMain() { if (view === 'grid') renderGrid(); else renderKanban(); }
-
 // ---------------- 动态看板 ----------------
 function setView(v) {
   view = v;
   document.querySelectorAll('.vtab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
   $('boardBy').classList.toggle('hidden', v !== 'kanban');
-  $('todo-note')?.remove();
   renderMain();
 }
-function setBoardBy(v) { boardBy = v; renderKanban(); }
+function setBoardBy(v) { boardBy = v; renderKanban(filtered()); }
 function kanbanCols() {
   if (boardBy === 'grade') return [{ key: 'S' }, { key: 'A' }, { key: 'B' }, { key: 'C' }, { key: 'D' }].map(c => ({ ...c, label: c.key + ' 级', color: GCOLOR[c.key] }));
   if (boardBy === 'channel') return [
@@ -242,7 +310,7 @@ function kanbanKeyOf(m) {
   return m.analysis.hook?.hookType || '无明确钩子';
 }
 function kCardHTML(m) {
-  const src = thumbOf(m, true);
+  const src = thumbOf(m);
   const img = src ? `<img class="kthumb" src="${src}" alt="">` : `<div class="kthumb" style="display:flex;align-items:center;justify-content:center">🎬</div>`;
   return `<div class="kcard" draggable="true" data-id="${m.id}"
       ondragstart="onKDrag(event,'${m.id}')" ondragend="onKDragEnd(event)" onclick="openDrawer('${m.id}')">
@@ -254,11 +322,9 @@ function kCardHTML(m) {
       <span class="kbadge badge-${effGrade(m)}">${effGrade(m)}</span>
     </div>`;
 }
-function renderKanban() {
-  const list = filtered();
+function renderKanban(list) {
   $('grid').classList.add('hidden');
   $('kanban').classList.remove('hidden');
-  $('empty').classList.toggle('hidden', list.length > 0);
   const cols = kanbanCols();
   $('kanban').innerHTML = cols.map(c => {
     const items = list.filter(m => kanbanKeyOf(m) === c.key);
@@ -311,7 +377,6 @@ function renderDrawer() {
   const m = cur();
   if (!m) return;
   const a = m.analysis, b = m.basic;
-  const risks = a.policy?.risks || [];
   const riskState = m.custom?.riskState || {};
   const src = thumbOf(m);
 
@@ -442,8 +507,6 @@ function renderDrawer() {
 
   const aiBtn = $('btnAI');
   if (aiBtn) aiBtn.onclick = () => runAI(m.id);
-  const dv = $('dvideo');
-  if (dv && b.durationSec) dv.onloadedmetadata = () => { /* 时间轴跳转 */ };
 }
 
 function selOpts(list, curVal) {
@@ -523,17 +586,14 @@ function onJevIn(el) {
   m.analysis.hook.score = +$('s-j').value;
   m.analysis.engagement.score = +$('s-e').value;
   m.analysis.value.score = +$('s-v').value;
-  // 实时更新综合分徽章与判定
   const comp = clComputeComposite(m.analysis);
   document.querySelector('.d-score b').textContent = comp;
   const g = clGrade(comp);
   const dsc = document.querySelector('.d-score');
   dsc.className = 'd-score ' + g.grade;
   dsc.style.background = GCOLOR[g.grade];
-  // 判定区（简化：不清空风险勾选，直接用当前勾选状态计算）
   const risks = currentRisks(m);
   const plats = clPlatforms(m, risks);
-  m._tmpPlats = plats;
   $('verdictZone').innerHTML = verdictZoneHTML({ ...m, analysis: { ...m.analysis, platforms: plats } });
 }
 function currentRisks(m) {
@@ -544,7 +604,6 @@ function currentRisks(m) {
     const exist = mRisks.find(x => x.key === key);
     return exist || { key, level: r.severity, label: r.label, automatic: false };
   });
-  // 保留自动命中的（无人为改动时）
   return manual.length ? manual : mRisks;
 }
 async function saveDetail() {
@@ -691,7 +750,7 @@ function openAdd() {
     </div>
     <div class="line20"></div>
     <div class="mfield"><label>批量扫描本地素材文件夹（服务端递归扫描）</label>
-      <input id="importDir" placeholder="输入绝对路径，如 /Users/me/creatives 或 D:/materials"></div>
+      <input id="importDir" placeholder="输入绝对路径，如 /workspace/creative-studio/demo"></div>
     <button class="btn primary" onclick="runFolderImport()">扫描此文件夹入库</button>
     <div class="line20"></div>
     <div class="mfield"><label>粘贴素材链接</label>
@@ -792,18 +851,12 @@ $('btnExport').onclick = exportAll;
 $('drawerBackdrop').onclick = closeDrawer;
 $('modalBackdrop').onclick = closeModal;
 $('modelModalBackdrop').onclick = closeModel;
-$('searchBox').oninput = e => { f.q = e.target.value; renderMain(); };
-$('fGrade').onchange = e => { f.grade = e.target.value; renderMain(); };
-$('fChannel').onchange = e => { f.channel = e.target.value; renderMain(); };
-$('fMedia').onchange = e => { f.media = e.target.value; renderMain(); };
-$('fActor').onchange = e => { f.actor = e.target.value; renderMain(); };
-$('fRange').onchange = e => { f.range = e.target.value; renderMain(); };
+$('searchBox').oninput = e => { F.q = e.target.value; renderPanel(); renderMain(); };
+$('fMin').oninput = e => { F.minScore = Math.max(0, Math.min(100, +e.target.value || 0)); renderMain(); renderPanel(); };
+$('fMax').oninput = e => { F.maxScore = Math.max(0, Math.min(100, +e.target.value || 100)); renderMain(); renderPanel(); };
+$('fRiskOnly').onchange = e => { F.riskOnly = e.target.checked; renderPanel(); renderMain(); };
+$('fClear').onclick = clearFilters;
 $('sortBy').onchange = e => { sortBy = e.target.value; renderMain(); };
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeDrawer(); closeModal(); closeModel(); } });
-
-// 看板拖拽全局
-document.addEventListener('dragstart', e => {
-  if (e.target.classList.contains('card')) e.dataTransfer.setData('text/plain', e.target.dataset.id);
-});
 
 loadData();
