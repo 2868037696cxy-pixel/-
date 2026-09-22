@@ -352,6 +352,7 @@ async function applyAIResult(m, result) {
   m.analysis.aiRecommendation = result.recommendation || 'review';
   m.analysis.aiRecommendReason = result.recommendReason || '';
   m.analysis.aiAssessed = true;
+  m.analysis.aiProvider = result.provider || 'typesafe';
 
   // 合规风险：Noul 判定 → riskState 勾选（critical 类）
   const riskState = m.custom.riskState || {};
@@ -380,10 +381,36 @@ async function callTypeSafeWithRetry(material, retries = 2) {
   return null;
 }
 
+// 本地启发式评测（未配置 TYPESAFE_API_KEY 时的兜底扫描，保证扫描流程可演示）
+function localAIResult(m) {
+  const a = m.analysis || {};
+  const risks = a.policy?.risks || [];
+  const hasRisk = risks.some(r => r.level === 'critical');
+  const avg = ((a.hook?.score || 0) + (a.engagement?.score || 0) + (a.value?.score || 0)) / 3;
+  let recommendation = 'review';
+  let reason = '三维中等，建议人工复核关键短板';
+  if (hasRisk) { recommendation = 'reject'; reason = '检测到合规风险项（critical 一票否决）'; }
+  else if (avg >= 7) { recommendation = 'keep'; reason = 'J/E/V 三维均强势，质量达标'; }
+  else if (avg < 4.5) { recommendation = 'reject'; reason = '三维偏弱，建议淘汰或重构'; }
+  return {
+    provider: 'local',
+    recommendation,
+    recommendReason: reason,
+    hook: { score: a.hook?.score },
+    engagement: { score: a.engagement?.score },
+    value: { score: a.value?.score },
+    policy: {}
+  };
+}
+
 app.post('/api/analyze/:id', async (req, res) => {
   const m = getMaterial(req.params.id);
   if (!m) return res.status(404).json({ error: 'not found' });
-  if (!aiAvailable()) return res.status(200).json({ ai: false, message: '未配置 TYPESAFE_API_KEY，当前使用本地启发式评分。' });
+  if (!aiAvailable()) {
+    const local = localAIResult(m);
+    await applyAIResult(m, local);
+    return res.json({ ai: false, provider: 'local', message: '未配置 TYPESAFE_API_KEY，已使用本地启发式评测。', recommendation: local.recommendation, material: m });
+  }
   try {
     const result = await callTypeSafeWithRetry(m);
     if (!result) return res.status(200).json({ ai: false, message: 'TypeSafe 评测未返回有效结果' });
@@ -398,11 +425,25 @@ app.post('/api/analyze/:id', async (req, res) => {
 app.post('/api/analyze-batch', async (req, res) => {
   const { ids = [], concurrency = 3 } = req.body || {};
   if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: '缺少 ids' });
-  if (!aiAvailable()) return res.status(200).json({ ai: false, message: '未配置 TYPESAFE_API_KEY' });
 
   const queue = ids.map(id => getMaterial(id)).filter(Boolean);
   const done = [];
   const failed = [];
+
+  if (!aiAvailable()) {
+    // 未配置 TypeSafe：逐条本地启发式评测（保证扫描队列可逐格点亮）
+    for (const m of queue) {
+      try {
+        const local = localAIResult(m);
+        await applyAIResult(m, local);
+        done.push({ id: m.id, name: m.name, recommendation: local.recommendation });
+      } catch (e) {
+        failed.push({ id: m.id, name: m.name, error: e.message.slice(0, 120) });
+      }
+    }
+    return res.json({ ai: false, provider: 'local', total: queue.length, done: done.length, failed, doneList: done });
+  }
+
   let cursor = 0;
   const worker = async () => {
     while (cursor < queue.length) {

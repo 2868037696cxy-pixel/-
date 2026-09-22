@@ -1600,12 +1600,25 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.rem
 
 // ---------------- AI 全库审核（TypeSafe 批量评测） ----------------
 let aiRunBusy = false;
+let aiStop = false;
 function openAIReview() {
   $('aiModalBackdrop').classList.remove('hidden');
   $('aiModal').classList.remove('hidden');
   renderAIRefresh();
 }
 function closeAIReview() { $('aiModalBackdrop').classList.add('hidden'); $('aiModal').classList.add('hidden'); }
+
+// 扫描队列瓦片
+function aiTileHTML(m) {
+  const src = thumbOf(m);
+  const img = src ? `<img src="${src}" loading="lazy" alt="">` : '<span style="font-size:18px">🗂️</span>';
+  return `<div class="ai-tile" data-id="${m.id}" title="${esc(m.name)} · ${fmt(m.analysis.composite)} 分">
+    ${img}
+    <span class="bulk-score badge-${effGrade(m)}">${fmt(m.analysis.composite)}</span>
+    <span class="ai-rec" data-rec=""></span>
+    <span class="scan-light"></span>
+  </div>`;
+}
 
 function renderAIRefresh() {
   const total = MATERIALS.length;
@@ -1617,9 +1630,17 @@ function renderAIRefresh() {
     reject: MATERIALS.filter(m => m.analysis.aiRecommendation === 'reject').length
   };
   const todoIds = MATERIALS.filter(m => !m.analysis.aiAssessed).map(m => m.id);
+  const tiles = todoIds.map(id => aiTileHTML(MATERIALS.find(m => m.id === id))).join('');
+  const noAi = !(MODEL.ai || {}).available;
+  const queueArea = todoIds.length
+    ? `<div class="ai-scan-stage" id="aiScanStage">
+        <div class="ai-scan-grid" id="aiScanGrid">${tiles}</div>
+        <div class="scan-beam" id="aiScanBeam"></div>
+      </div>`
+    : `<div class="ai-scan-done">✅ 全部素材已完成 AI 评测${noAi ? '（本地启发式）' : ''}</div>`;
   $('aiModal').innerHTML = `
     <h2>✦ TypeSafe AI 审核</h2>
-    <div class="sub">调用 Jev 模型对素材做全量结构化评测：J/E/V 三维打分、Hook/出镜/场景分类、合规风险判定，并给出 通过/复核/淘汰 建议。审核结果会自动回填评分与标签。</div>
+    <div class="sub">调用 Jev 模型对素材做全量结构化评测：J/E/V 三维打分、Hook/出镜/场景分类、合规风险判定，并给出 通过/复核/淘汰 建议。审核结果会自动回填评分与标签。${noAi ? '<br><b style="color:var(--warn)">未配置 TYPESAFE_API_KEY，当前使用本地启发式评测。</b>' : ''}</div>
     <div class="ai-stats">
       <div class="ai-stat"><b>${total}</b><span>素材总数</span></div>
       <div class="ai-stat"><b>${assessed}</b><span>已审核</span></div>
@@ -1632,19 +1653,43 @@ function renderAIRefresh() {
     </div>
     <div class="ai-progress"><i id="aiProgFill" style="width:${total ? (assessed / total) * 100 : 0}%"></i></div>
     <div class="subtle" id="aiProgText">已完成 ${assessed} / ${total} 张</div>
+    <div class="ai-scan-wrap">
+      <div class="ai-scan-hud">
+        <span class="hud-led" id="aiHudLed">○</span><b class="hud-name">SCAN.QUEUE</b>
+        <span class="hud-right"><b id="aiHudPct">${total ? Math.round(assessed / total * 100) : 0}%</b><span class="hud-sep">·</span><span id="aiHudDone">${assessed}/${total}</span></span>
+      </div>
+      ${queueArea}
+    </div>
     <div class="ai-result" id="aiResult"></div>
     <div class="import-actions">
-      <button class="btn primary" id="btnAIGo" ${todoIds.length && !aiRunBusy ? '' : 'disabled'} onclick="runAIBatch()">⚡ 审核全部 ${todoIds.length} 张未审核素材</button>
+      <button class="btn primary scan-switch" id="btnAIGo" onclick="runAIBatch()">
+        <i class="sw-track"><i class="sw-knob"></i></i>
+        <span class="sw-label" id="swLabel">⚡ 启动扫描</span>
+        <span class="sw-count" id="swCount">${todoIds.length} 张待扫</span>
+      </button>
       <button class="btn ghost" onclick="closeAIReview()">关闭</button>
     </div>`;
   window.__aiTodoIds = todoIds;
+  syncAISwitch();
+}
+
+function syncAISwitch() {
+  const btn = $('btnAIGo');
+  if (!btn) return;
+  btn.classList.toggle('on', aiRunBusy);
+  btn.classList.toggle('busy', aiRunBusy);
+  btn.disabled = aiRunBusy ? false : !(window.__aiTodoIds || []).length;
+  const lbl = $('swLabel');
+  if (lbl) lbl.textContent = aiRunBusy ? '⏸ 点击停止' : ((window.__aiTodoIds || []).length ? '⚡ 启动扫描' : '✅ 已全部完成');
+  const cnt = $('swCount');
+  if (cnt) cnt.textContent = (window.__aiTodoIds || []).length + ' 张待扫';
 }
 
 async function runAIBatch() {
-  if (aiRunBusy) return;
+  if (aiRunBusy) { aiStop = true; toast('⏹ 已请求停止，扫完当前批次后暂停…'); return; }
   const ids = window.__aiTodoIds || [];
   if (!ids.length) return toast('没有待审核素材');
-  aiRunBusy = true;
+  aiRunBusy = true; aiStop = false;
   const total = ids.length;
   const concurrency = Math.max(1, Math.min(4, Math.ceil(total / 20)));
   const chunks = [];
@@ -1652,34 +1697,78 @@ async function runAIBatch() {
   const resEl = $('aiResult');
   const fill = $('aiProgFill');
   const txt = $('aiProgText');
+  const led = $('aiHudLed');
+  const stage = $('aiScanStage');
+  const grid = $('aiScanGrid');
+  const beam = $('aiScanBeam');
+  if (stage) stage.classList.add('scanning');
+  if (led) { led.classList.add('on'); led.textContent = '◉'; }
+  syncAISwitch();
+  if (resEl) resEl.textContent = `✦ 扫描启动：${total} 张素材排队中…`;
   let done = 0, failedN = 0;
-  const runChunk = async (chunk) => {
-    try {
-      const r = await fetch('/api/analyze-batch', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: chunk, concurrency })
-      }).then(x => x.json());
-      done += (r.doneList || []).length;
-      failedN += (r.failed || []).length;
-    } catch { failedN += chunk.length; }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const reveal = async (id, rec) => {
+    const item = grid ? grid.querySelector(`.ai-tile[data-id="${id}"]`) : null;
+    if (item && grid && stage && beam) {
+      const sr = stage.getBoundingClientRect();
+      const ir = item.getBoundingClientRect();
+      beam.style.top = Math.max(0, Math.min(stage.offsetHeight - 2, ir.top - sr.top + ir.height / 2)) + 'px';
+      beam.classList.remove('fire'); void beam.offsetWidth; beam.classList.add('fire');
+      try { item.scrollIntoView({ block: 'nearest' }); } catch {}
+    }
+    if (item) {
+      grid.querySelectorAll('.ai-tile.scanning').forEach(el => el.classList.remove('scanning'));
+      item.classList.add('scanning');
+    }
+    await sleep(130);
+    if (item) {
+      item.classList.remove('scanning');
+      item.classList.add('done');
+      const light = item.querySelector('.scan-light');
+      if (light) { light.style.background = 'var(--ok)'; light.style.boxShadow = '0 0 6px rgba(52,211,153,.6)'; }
+      const recEl = item.querySelector('.ai-rec');
+      if (recEl) { recEl.textContent = rec === 'keep' ? '过' : rec === 'reject' ? '汰' : '核'; recEl.className = 'ai-rec show ' + (rec || 'review'); }
+    }
+    done++;
     const pct = Math.round((done / total) * 100);
     if (fill) fill.style.width = pct + '%';
-    if (txt) txt.textContent = `已审核 ${done} / ${total} 张${failedN ? ' · 失败 ' + failedN : ''}`;
-    if (resEl) {
-      resEl.textContent = `✦ TypeSafe 批量审核中… 已完成 ${done} / ${total}`;
-      resEl.scrollTop = resEl.scrollHeight;
-    }
+    if (txt) txt.textContent = `已扫描 ${done} / ${total} 张${failedN ? ' · 失败 ' + failedN : ''}`;
+    const hp = $('aiHudPct'); if (hp) hp.textContent = pct + '%';
+    const hd = $('aiHudDone'); if (hd) hd.textContent = `${done}/${total}`;
   };
-  for (let i = 0; i < chunks.length; i++) {
-    await runChunk(chunks[i]);
+  for (let i = 0; i < chunks.length && !aiStop; i++) {
+    let r;
+    try {
+      r = await fetch('/api/analyze-batch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: chunks[i], concurrency })
+      }).then(x => x.json());
+    } catch { r = { doneList: [], failed: chunks[i].map(id => ({ id })) }; }
+    const doneMap = {};
+    for (const d of (r.doneList || [])) doneMap[d.id] = d.recommendation || 'review';
+    for (const id of chunks[i]) {
+      if (aiStop) break;
+      await reveal(id, doneMap[id] || 'review');
+    }
+    failedN += (r.failed || []).length;
     await loadData();
-    if (resEl && i < chunks.length - 1) renderAIRefresh();
+    if (resEl && !aiStop) resEl.textContent = `✦ 扫描中… 已完成 ${done} / ${total}`;
   }
   aiRunBusy = false;
+  if (stage) stage.classList.remove('scanning');
+  if (led) { led.classList.remove('on'); led.textContent = '○'; }
   await loadData();
-  if (resEl) resEl.textContent = failedN ? `审核完成：成功 ${done}，失败 ${failedN}` : `✅ 审核完成：${done} 张素材已完成 AI 评测`;
+  const remaining = (window.__aiTodoIds || []).length;
+  const msg = aiStop
+    ? `⏹ 已停止：本次完成 ${done} 张${failedN ? ' · 失败 ' + failedN : ''}${remaining ? ` · 剩余 ${remaining} 张待扫` : ''}`
+    : failedN
+      ? `扫描完成：成功 ${done}，失败 ${failedN}`
+      : `✅ 扫描完成：${done} 张素材已完成 AI 评测`;
   renderAIRefresh();
-  toast(`AI 审核完成：${done} 张`);
+  syncAISwitch();
+  const re = $('aiResult');
+  if (re) re.textContent = msg;
+  if (!aiStop) toast(`AI 审核完成：${done} 张`);
 }
 
 // ---------------- 事件绑定 ----------------
