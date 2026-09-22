@@ -53,6 +53,10 @@
         </div>
       </div>
       <div class="fgroup">
+        <label>审片状态</label>
+        <div class="chips" id="fReview"></div>
+      </div>
+      <div class="fgroup">
         <label>品类</label>
         <div class="checks scroll" id="fCats" style="max-height:140px"></div>
       </div>
@@ -92,6 +96,7 @@
         <div class="hitinfo">命中 <b id="hitCount">0</b> / 共 <b id="totalCount">0</b> 个素材</div>
         <div class="viewtabs">
           <button class="vtab active" data-view="grid" onclick="setView('grid')">素材墙</button>
+          <button class="vtab" data-view="review" onclick="setView('review')">审片扫描</button>
           <button class="vtab" data-view="cats" onclick="setView('cats')">分类状态</button>
           <button class="vtab" data-view="kanban" onclick="setView('kanban')">分类看板</button>
           <select id="boardBy" class="select boardby hidden" onchange="setBoardBy(this.value)">
@@ -109,6 +114,7 @@
       </section>
 
       <main id="grid" class="grid"></main>
+      <main id="review" class="review hidden"></main>
       <main id="cats" class="catsview hidden"></main>
       <main id="kanban" class="kanban hidden"></main>
       <div id="empty" class="empty hidden">

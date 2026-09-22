@@ -17,6 +17,7 @@ const F = {
   q: '',
   grades: new Set(),    // S/A/B/C/D 多选
   categories: new Set(),// 品类
+  review: new Set(),    // 审片状态 todo/keep/reject
   media: new Set(),     // video/image
   channels: new Set(),  // google/meta/tiktok（可投=GO）
   actors: new Set(),
@@ -106,6 +107,7 @@ function bestChannel(m) {
 }
 const flatTags = m => [...(m.analysis.tags?.basic || []), ...(m.analysis.tags?.content || []), ...(m.analysis.tags?.strategy || []), ...(m.analysis.tags?.advice || []), ...(m.custom?.customTags || [])];
 const policyRiskCount = m => (m.analysis.policy?.risks || []).length;
+const revOf = m => m.custom?.review || 'todo';   // 审片状态：todo 未审 / keep 通过 / reject 淘汰
 
 // ---------------- 筛选 ----------------
 function hasFilter() {
@@ -117,6 +119,7 @@ function filtered() {
   return MATERIALS.filter(m => {
     if (F.grades.size && !F.grades.has(effGrade(m))) return false;
     if (F.categories.size && !F.categories.has(m.custom?.category || '未分类')) return false;
+    if (F.review.size && !F.review.has(revOf(m))) return false;
     if (F.media.size && !F.media.has(m.basic.mediaType)) return false;
     if (F.actors.size && !F.actors.has(m.analysis.engagement?.actor || '')) return false;
     if (F.hooks.size && !F.hooks.has(m.analysis.hook?.hookType || '无明确钩子')) return false;
@@ -165,6 +168,12 @@ function renderPanel() {
     return `<span class="fchip ${F.grades.has(g.grade) ? 'on' : ''}" onclick="togF('grades','${g.grade}')"><i class="gdot" style="background:${GCOLOR[g.grade]}"></i>${g.grade} · ${g.label}<small>${n}</small></span>`;
   }).join('');
 
+  // 审片状态
+  const rvCount = { todo: 0, keep: 0, reject: 0 };
+  for (const m of MATERIALS) rvCount[revOf(m)]++;
+  $('fReview').innerHTML = [['todo', '⏳ 未审'], ['keep', '✅ 通过'], ['reject', '❌ 淘汰']].map(([k, l]) =>
+    `<span class="fchip ${F.review.has(k) ? 'on' : ''}" onclick="togF('review','${k}')">${l}<small>${rvCount[k]}</small></span>`).join('');
+
   // 品类
   const catCount = countBy(m => m.custom?.category || '未分类');
   $('fCats').innerHTML = Object.entries(catCount).sort((a, b) => b[1] - a[1]).map(([c, n]) =>
@@ -205,6 +214,7 @@ function renderPanel() {
   if (F.q) parts.push(`搜索“${F.q}”`);
   if (F.grades.size) parts.push('评级 ' + [...F.grades].join('/'));
   if (F.categories.size) parts.push('品类 ' + [...F.categories].join('/'));
+  if (F.review.size) parts.push('审片 ' + [...F.review].map(x => x === 'todo' ? '未审' : x === 'keep' ? '通过' : '淘汰').join('/'));
   if (F.media.size) parts.push([...F.media].map(x => x === 'video' ? '视频' : '单图').join('/'));
   if (F.channels.size) parts.push([...F.channels].map(k => CH_NAME[k]).join('或') + ' 可投');
   if (F.actors.size) parts.push('出镜 ' + [...F.actors].join('/'));
@@ -215,7 +225,7 @@ function renderPanel() {
   $('fSummary').innerHTML = parts.length ? `已选 <b>${parts.length}</b> 项：${parts.join(' · ')}` : '当前未筛选（显示全部素材）';
 }
 function clearFilters() {
-  F.q = ''; F.grades.clear(); F.categories.clear(); F.media.clear(); F.channels.clear();
+  F.q = ''; F.grades.clear(); F.categories.clear(); F.review.clear(); F.media.clear(); F.channels.clear();
   F.actors.clear(); F.hooks.clear(); F.tags.clear();
   F.minScore = 0; F.maxScore = 100; F.riskOnly = false;
   $('searchBox').value = ''; $('fMin').value = ''; $('fMax').value = ''; $('fRiskOnly').checked = false;
@@ -255,6 +265,7 @@ function cardHTML(m) {
   const vChip = (p, k) => `<span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}" title="${esc((p.reasons || []).join('；'))}"><i>${CH_ICON[k]}</i>${fmt(p.fit)}</span>`;
   return `<article class="card" data-id="${m.id}" draggable="true" onclick="openDrawer('${m.id}')">
     <div class="thumb">${mediaEl}
+      ${revOf(m) !== 'todo' ? `<div class="rv-badge ${revOf(m)}">${revOf(m) === 'keep' ? '✅ 通过' : '❌ 淘汰'}</div>` : ''}
       <div class="score-badge ${g}"><b>${fmt(a.composite)}</b><span>分</span></div>
       <div class="grade-chip badge-${g}">${g}级${m.custom?.manualGrade ? ' ✍' : ''}</div>
     </div>
@@ -282,12 +293,14 @@ function renderMain() {
   $('empty').classList.toggle('hidden', !none);
   $('emptyText').textContent = MATERIALS.length === 0 ? '素材库为空' : '没有符合条件的素材';
   if (view === 'grid') renderGrid(list);
+  else if (view === 'review') renderReview(list);
   else if (view === 'cats') renderCategoryView(list);
   else renderKanban(list);
 }
 function renderGrid(list) {
   $('kanban').classList.add('hidden');
   $('cats').classList.add('hidden');
+  $('review').classList.add('hidden');
   $('grid').classList.remove('hidden');
   $('grid').innerHTML = list.map(cardHTML).join('');
 }
@@ -376,6 +389,7 @@ function categoryCardHTML(cat, mats) {
 function renderCategoryView(list) {
   $('grid').classList.add('hidden');
   $('kanban').classList.add('hidden');
+  $('review').classList.add('hidden');
   $('cats').classList.remove('hidden');
   if (!list.length) { $('cats').innerHTML = ''; return; }
   // 按品类聚合（未分类的兜底展示）
@@ -397,9 +411,144 @@ function gotoCategory(cat) {
   toast(`已筛选品类：${cat}`);
 }
 
+// ---------------- 审片扫描视图（一张一张检查 + 进度条） ----------------
+let reviewIdx = 0;
+let reviewQueue = [];
+
+function renderReview(list) {
+  reviewQueue = list;
+  $('grid').classList.add('hidden');
+  $('kanban').classList.add('hidden');
+  $('cats').classList.add('hidden');
+  $('empty').classList.add('hidden');
+  $('review').classList.remove('hidden');
+  if (!list.length) { $('review').innerHTML = reviewDoneHTML([]); return; }
+  if (reviewIdx >= list.length) reviewIdx = list.length - 1;
+  if (reviewIdx < 0) reviewIdx = 0;
+  const m = list[reviewIdx];
+  const total = list.length;
+  const reviewed = list.filter(x => revOf(x) !== 'todo').length;
+  const keepN = list.filter(x => revOf(x) === 'keep').length;
+  const rejN = list.filter(x => revOf(x) === 'reject').length;
+  const pct = Math.round(((reviewIdx + 1) / total) * 100);
+
+  $('review').innerHTML = `
+  <div class="review-top">
+    <div class="rv-meta">检查进度：第 <b>${reviewIdx + 1}</b> / <b>${total}</b> 张
+      <span class="rv-stats"><i class="rv-chip keep">✅ 通过 ${keepN}</i><i class="rv-chip reject">❌ 淘汰 ${rejN}</i><i class="rv-chip todo">⏳ 未审 ${total - reviewed}</i></span>
+    </div>
+    <div class="rv-progress"><i style="width:${pct}%"></i></div>
+  </div>
+  <div class="review-stage">
+    <div class="review-main">
+      <div class="rv-frame">
+        ${frameHTML(m, reviewIdx, total)}
+      </div>
+      <div class="rv-actions">
+        <button class="rv-btn ghost" onclick="reviewStep(-1)">⏮ 上一张</button>
+        <button class="rv-btn reject" onclick="reviewAct('reject')">❌ 淘汰 (X)</button>
+        <button class="rv-btn keep" onclick="reviewAct('keep')">✅ 通过 (P)</button>
+        <button class="rv-btn ghost" onclick="reviewStep(1)">⏭ 下一张</button>
+      </div>
+      <div class="rv-hints">快捷键：← 上一张 · → 下一张 · P 通过 · X 淘汰 · 点击下方缩略图可跳转</div>
+    </div>
+    <aside class="review-side">${reviewSideHTML(m)}</aside>
+  </div>
+  <div class="review-strip">${stripHTML(list, reviewIdx)}</div>`;
+}
+function frameHTML(m, i, total) {
+  const src = thumbOf(m);
+  const media = !src
+    ? `<div class="rv-nomedia">🗂️</div>`
+    : m.basic.mediaType === 'video'
+      ? `<video src="${m.ref}" poster="${m.basic.poster || ''}" controls style="max-width:100%;max-height:56vh"></video>`
+      : `<img src="${src}" style="max-width:100%;max-height:56vh" alt="">`;
+  const st = revOf(m);
+  const stBadge = st === 'keep' ? '<span class="rv-tag keep">✅ 已通过</span>' : st === 'reject' ? '<span class="rv-tag reject">❌ 已淘汰</span>' : '<span class="rv-tag todo">⏳ 待审</span>';
+  return `<div class="rv-frame-head"><span>#${i + 1}/${total}</span><b>${esc(m.name)}</b>${stBadge}</div>
+    <div class="rv-frame-body">${media}</div>
+    <div class="rv-frame-foot">
+      <span class="score-badge ${effGrade(m)}"><b>${fmt(m.analysis.composite)}</b><span>分</span></span>
+      <div class="verdicts">${['google', 'meta', 'tiktok'].map(k => {
+        const p = m.analysis.platforms?.[k];
+        return `<span class="vchip ${p?.verdict === 'GO' ? 'g' : p?.verdict === 'COND' ? 'y' : 'r'}"><i>${CH_ICON[k]}</i>${fmt(p?.fit || 0)}</span>`;
+      }).join('')}</div>
+      ${policyRiskCount(m) ? '<span class="tag risk">⚠ ' + policyRiskCount(m) + ' 风险</span>' : ''}
+    </div>`;
+}
+function reviewSideHTML(m) {
+  const a = m.analysis;
+  const dim = (label, val, color) => `<div class="dim"><span class="lbl">${label}</span>
+    <div style="flex:1;height:6px;background:#eef1f8;border-radius:3px"><div style="width:${val * 10}%;height:100%;background:${color};border-radius:3px"></div></div>
+    <span class="val">${val}</span></div>`;
+  return `
+    <div class="section"><h3>JEV 三维</h3>
+      ${dim('J 吸睛度', a.hook?.score || 0, '#f43f5e')}
+      ${dim('E 沉浸信任', a.engagement?.score || 0, '#8b5cf6')}
+      ${dim('V 转化闭环', a.value?.score || 0, '#10b981')}
+      <div class="subtle" style="margin-top:4px">评级 <b>${effGrade(m)} 级</b>${m.custom?.manualGrade ? '(人工)' : ''} · Hook：${a.hook?.hookType || '未标'}</div>
+    </div>
+    <div class="section"><h3>平台判定</h3>${verdictZoneHTML(m)}</div>
+    <div class="section"><h3>标签</h3>
+      <div class="tags">${flatTags(m).slice(0, 12).map(t => `<span class="tag ${/风险|违禁/.test(t) ? 'risk' : /建议/.test(t) ? 'advice' : ''}">${esc(t)}</span>`).join('') || '<span class="subtle">暂无标签</span>'}</div>
+    </div>
+    <div class="d-actions">
+      <button class="btn sm line" onclick="openDrawer('${m.id}')">🔧 打开深度剖析</button>
+    </div>`;
+}
+function stripHTML(list, cur) {
+  return list.map((m, i) => {
+    const src = thumbOf(m);
+    const img = src ? `<img src="${src}" alt="">` : '🗂️';
+    const st = revOf(m);
+    return `<div class="rv-strip-item ${i === cur ? 'cur' : ''}" onclick="reviewJump(${i})">
+      ${img}
+      <span class="st st-${st === 'keep' ? 'go' : st === 'reject' ? 'no' : 'cond'}" title="${st === 'keep' ? '已通过' : st === 'reject' ? '已淘汰' : '未审查'}"></span>
+    </div>`;
+  }).join('');
+}
+function reviewJump(i) { reviewIdx = i; renderReview(filtered()); }
+function reviewStep(d) { reviewIdx += d; renderReview(filtered()); }
+async function reviewAct(status) {
+  const m = reviewQueue[reviewIdx];
+  if (!m) return;
+  const upd = await fetch('/api/materials/' + m.id, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ custom: { review: status } })
+  }).then(r => r.json());
+  MATERIALS = MATERIALS.map(x => x.id === m.id ? upd : x);
+  const updList = filtered();   // 若筛选含审片状态，列表会变化
+  const idx = updList.findIndex(x => x.id === m.id);
+  reviewIdx = idx >= 0 ? idx + 1 : Math.min(reviewIdx, updList.length - 1);
+  renderPanel(); renderMain();
+}
+function reviewDoneHTML() {
+  const all = MATERIALS;
+  const keepN = all.filter(x => revOf(x) === 'keep').length;
+  const rejN = all.filter(x => revOf(x) === 'reject').length;
+  const todoN = all.filter(x => revOf(x) === 'todo').length;
+  return `<div class="review-done">
+    <div style="font-size:52px">🎉</div>
+    <h3>本轮审片完成！</h3>
+    <div class="rv-stats" style="justify-content:center">
+      <i class="rv-chip keep">✅ 通过 ${keepN}</i><i class="rv-chip reject">❌ 淘汰 ${rejN}</i><i class="rv-chip todo">⏳ 未审 ${todoN}</i>
+    </div>
+    <div class="rv-done-actions">
+      ${todoN ? `<button class="btn primary" onclick="reviewOnlyTodo()">继续审阅 ${todoN} 张未审素材</button>` : ''}
+      <button class="btn soft" onclick="setView('grid')">返回素材墙</button>
+    </div>
+  </div>`;
+}
+function reviewOnlyTodo() {
+  F.review = new Set(['todo']);
+  setView('review');
+  renderPanel();
+}
+
 // ---------------- 动态看板 ----------------
 function setView(v) {
   view = v;
+  if (v === 'review') reviewIdx = 0;   // 进入审片模式从头开始
   document.querySelectorAll('.vtab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
   $('boardBy').classList.toggle('hidden', v !== 'kanban');
   renderMain();
@@ -436,6 +585,7 @@ function kCardHTML(m) {
 function renderKanban(list) {
   $('grid').classList.add('hidden');
   $('cats').classList.add('hidden');
+  $('review').classList.add('hidden');
   $('kanban').classList.remove('hidden');
   const cols = kanbanCols();
   $('kanban').innerHTML = cols.map(c => {
@@ -969,6 +1119,16 @@ $('fMax').oninput = e => { F.maxScore = Math.max(0, Math.min(100, +e.target.valu
 $('fRiskOnly').onchange = e => { F.riskOnly = e.target.checked; renderPanel(); renderMain(); };
 $('fClear').onclick = clearFilters;
 $('sortBy').onchange = e => { sortBy = e.target.value; renderMain(); };
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeDrawer(); closeModal(); closeModel(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeDrawer(); closeModal(); closeModel(); return; }
+  // 审片模式快捷键（输入框内不触发）
+  if (view === 'review' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) &&
+      document.getElementById('drawer').classList.contains('hidden')) {
+    if (e.key === 'ArrowRight') { e.preventDefault(); reviewStep(1); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); reviewStep(-1); }
+    else if (e.key === 'p' || e.key === 'P') { reviewAct('keep'); }
+    else if (e.key === 'x' || e.key === 'X') { reviewAct('reject'); }
+  }
+});
 
 loadData();
