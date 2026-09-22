@@ -330,6 +330,18 @@ textarea{resize:vertical;min-height:56px}
 .bulk-item .st{position:absolute;bottom:4px;right:4px;width:11px;height:11px}
 .bulk-pager{display:flex;align-items:center;gap:14px;justify-content:center;margin-top:12px;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
 .bulk-pager .btn:disabled{opacity:.4;pointer-events:none}
+
+/* 扫描动画：光带逐格扫过 */
+.rv-btn.scan{background:linear-gradient(135deg,#06b6d4,#3b82f6);border-color:transparent;color:#fff;box-shadow:0 4px 14px rgba(6,182,212,.35)}
+.rv-btn.scan:hover{filter:brightness(1.06)}
+.bulk-item.scanning{border-color:#22d3ee !important;box-shadow:0 0 16px rgba(34,211,238,.9);z-index:2;animation:scanpulse .24s ease infinite alternate}
+.bulk-item.scanning::after{content:'';position:absolute;left:0;right:0;top:-45%;height:45%;background:linear-gradient(180deg,transparent,rgba(34,211,238,.65),transparent);animation:sweepline .18s linear infinite;pointer-events:none}
+@keyframes sweepline{to{top:115%}}
+@keyframes scanpulse{from{box-shadow:0 0 10px rgba(34,211,238,.7)}to{box-shadow:0 0 22px rgba(34,211,238,1)}}
+.scan-dot{display:none;position:absolute;bottom:4px;left:4px;width:6px;height:6px;border-radius:50%;background:#22d3ee;box-shadow:0 0 6px #22d3ee}
+.bulk-item.scanned{opacity:.93}
+.bulk-item.scanned .scan-dot{display:block}
+.bulk-item.scanning .scan-dot{display:block;animation:scanpulse .24s ease infinite alternate}
 @media (max-width:900px){
   .review-stage{flex-direction:column}
   .review-side{width:100%;max-height:none}

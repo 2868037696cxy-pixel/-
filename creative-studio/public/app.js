@@ -420,12 +420,19 @@ let bulkPage = 0;           // 当前批次
 let lastBulkIdx = null;     // shift 连续选择锚点
 let lastPageIds = [];       // 当前批 id 顺序
 const BATCH = 50;           // 每批 50 张
+// 扫描动画状态
+let scanOn = false;         // 是否扫描中
+let scanIdx = 0;            // 当前扫到的格子序号
+let scanTimer = null;
+let scanSpeed = 120;        // 每格毫秒（疾速/快速/舒缓）
 
 function setRevMode(v) {
+  stopBulkScan();
   revMode = v;
   bulkSel.clear();
   reviewIdx = 0;
   bulkPage = 0;
+  scanIdx = 0;
   renderMain();
 }
 
@@ -565,6 +572,13 @@ function reviewBulkHTML(list) {
     <button class="rv-btn reject" style="flex:0 1 auto;padding:9px 18px" onclick="bulkAct('reject')">❌ 淘汰所选 (${bulkSel.size})</button>
     <button class="rv-btn ghost" style="flex:0 1 auto;padding:9px 14px" onclick="bulkSelectAll()">全选本批 (${selInPage.length}/${pageList.length})</button>
     <button class="rv-btn ghost" style="flex:0 1 auto;padding:9px 14px" onclick="bulkClearSel()">清空选择</button>
+    <button class="rv-btn scan" id="btnScan" style="flex:0 1 auto;padding:9px 16px" onclick="startBulkScan()">⚡ 开始扫描</button>
+    <select class="select" style="width:auto" onchange="setScanSpeed(+this.value)" title="扫描速度">
+      <option value="60">疾速</option>
+      <option value="120" selected>快速</option>
+      <option value="220">舒缓</option>
+    </select>
+    <span class="subtle" id="scanStatus"></span>
     <label class="bulk-onlytodo"><input type="checkbox" ${onlyTodo ? 'checked' : ''} onchange="reviewOnlyToggle(this.checked)"> 只看未审（处理后自动翻批）</label>
   </div>
   <div class="bulk-grid">
@@ -588,6 +602,7 @@ function bulkItemHTML(m) {
       ${img}
       <span class="bulk-score badge-${effGrade(m)}">${fmt(m.analysis.composite)}</span>
       ${sel ? '<span class="bulk-check">✓</span>' : ''}
+      <span class="scan-dot"></span>
       <span class="st st-${st === 'keep' ? 'go' : st === 'reject' ? 'no' : 'cond'}"></span>
     </div>`;
 }
@@ -616,11 +631,72 @@ function bulkSelectAll() {
   renderReview(filtered());
 }
 function bulkClearSel() { bulkSel.clear(); renderReview(filtered()); }
-function bulkPageGo(d) { bulkPage += d; bulkSel.clear(); renderReview(filtered()); }
+function bulkPageGo(d) { stopBulkScan(); scanIdx = 0; bulkPage += d; bulkSel.clear(); renderReview(filtered()); }
 function reviewOnlyToggle(on) {
+  stopBulkScan(); scanIdx = 0;
   F.review = on ? new Set(['todo']) : new Set();
   bulkPage = 0; bulkSel.clear();
   renderPanel(); renderMain();
+}
+
+// ---------------- 扫描动画（光带逐格扫过，速度可调） ----------------
+function startBulkScan() {
+  if (scanOn) return;
+  const items = [...document.querySelectorAll('.bulk-item')];
+  if (!items.length) return toast('当前批没有素材可扫描');
+  if (scanIdx >= items.length) {
+    // 从头再扫：清除上一轮痕迹
+    scanIdx = 0;
+    items.forEach(el => el.classList.remove('scanned'));
+  }
+  scanOn = true;
+  scanTimer = setInterval(scanTick, scanSpeed);
+  syncScanUI();
+  toast(`⚡ 开始扫描本批 ${items.length} 张（${scanSpeed < 90 ? '疾速' : scanSpeed < 180 ? '快速' : '舒缓'}）`);
+}
+function pauseBulkScan() {
+  stopBulkScan();
+  toast('⏸ 已暂停扫描');
+}
+function stopBulkScan() {
+  if (scanTimer) clearInterval(scanTimer);
+  scanTimer = null;
+  scanOn = false;
+  syncScanUI();
+}
+function scanTick() {
+  const items = [...document.querySelectorAll('.bulk-item')];
+  if (!items.length) { stopBulkScan(); return; }
+  if (scanIdx < items.length) {
+    items.forEach(el => el.classList.remove('scanning'));
+    const cur = items[scanIdx];
+    if (cur) {
+      cur.classList.remove('scanned');
+      cur.classList.add('scanning');
+      try { cur.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch {}
+    }
+    if (scanIdx - 1 >= 0 && items[scanIdx - 1]) items[scanIdx - 1].classList.add('scanned');
+    scanIdx++;
+    const st = document.getElementById('scanStatus');
+    if (st) st.textContent = `⚡ 扫描中 ${Math.min(scanIdx, items.length)} / ${items.length}`;
+  } else {
+    stopBulkScan();
+    toast('✅ 本批扫描完成，可点选格子标记通过/淘汰');
+  }
+}
+function setScanSpeed(v) {
+  scanSpeed = v;
+  if (scanOn) { stopBulkScan(); startBulkScan(); }
+}
+function syncScanUI() {
+  const btn = document.getElementById('btnScan');
+  if (btn) {
+    btn.textContent = scanOn ? '⏸ 暂停扫描' : '⚡ 开始扫描';
+    btn.className = 'rv-btn ' + (scanOn ? 'reject' : 'scan');
+    btn.onclick = scanOn ? pauseBulkScan : startBulkScan;
+  }
+  const st = document.getElementById('scanStatus');
+  if (st && !scanOn) st.textContent = scanIdx > 0 ? `已扫 ${scanIdx} 格` : '';
 }
 async function bulkAct(status) {
   if (!bulkSel.size) return toast('先点选素材（可 Shift 连续选 / Ctrl 多选 / 全选本批）');
