@@ -454,7 +454,7 @@ function cardHTML(m) {
       : `<img src="${src}" loading="lazy" alt="">`;
   const vChip = (p, k) => `<span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}" title="${esc((p.reasons || []).join('；'))}"><i>${CH_ICON[k]}</i>${fmt(p.fit)}</span>`;
   const aiBadge = m.analysis.aiAssessed
-    ? `<span class="ai-chip ${m.analysis.aiRecommendation || 'review'}" title="TypeSafe 建议：${m.analysis.aiRecommendReason || ''}">✦ ${m.analysis.aiRecommendation === 'keep' ? '通过' : m.analysis.aiRecommendation === 'reject' ? '淘汰' : '复核'}</span>`
+    ? `<span class="ai-chip ${m.analysis.aiRecommendation || 'review'}" title="TypeSafe 建议：${esc(m.analysis.aiRecommendReason || '')}">✦ ${m.analysis.aiRecommendation === 'keep' ? '通过' : m.analysis.aiRecommendation === 'reject' ? '淘汰' : '复核'}</span>`
     : '';
   const dup = dupOfId[m.id];
   const dupBadge = dup
@@ -764,7 +764,7 @@ function reviewSideHTML(m) {
         <h3>✦ TypeSafe 审核建议</h3>
         <div class="ai-advice-main">
           <span class="ai-advice-tag ${m.analysis.aiRecommendation || 'review'}">${m.analysis.aiRecommendation === 'keep' ? '✅ 建议通过' : m.analysis.aiRecommendation === 'reject' ? '❌ 建议淘汰' : '🔍 建议人工复核'}</span>
-          <p class="subtle">${m.analysis.aiRecommendReason || ''}</p>
+          <p class="subtle">${esc(m.analysis.aiRecommendReason || '')}</p>
         </div>
       </div>`
     : `<div class="section"><h3>✦ TypeSafe AI</h3><p class="subtle">未评测 — 点击详情或顶栏「AI 审核」对本素材调用 Jev 模型。</p></div>`;
@@ -861,7 +861,7 @@ function bulkItemHTML(m) {
   const sel = bulkSel.has(m.id);
   const img = src ? `<img src="${src}" loading="lazy" alt="">` : '<span style="font-size:20px">🗂️</span>';
   const ai = m.analysis.aiAssessed
-    ? `<span class="bulk-ai ${m.analysis.aiRecommendation || 'review'}" title="TypeSafe 建议：${m.analysis.aiRecommendReason || ''}">✦${m.analysis.aiRecommendation === 'keep' ? '过' : m.analysis.aiRecommendation === 'reject' ? '汰' : '核'}</span>`
+    ? `<span class="bulk-ai ${m.analysis.aiRecommendation || 'review'}" title="TypeSafe 建议：${esc(m.analysis.aiRecommendReason || '')}">✦${m.analysis.aiRecommendation === 'keep' ? '过' : m.analysis.aiRecommendation === 'reject' ? '汰' : '核'}</span>`
     : '';
   return `<div class="bulk-item ${sel ? 'sel' : ''} bulk-${st}" data-id="${m.id}"
       onclick="bulkClick(event,'${m.id}')" ondblclick="openDrawer('${m.id}')"

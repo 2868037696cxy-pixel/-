@@ -106,13 +106,18 @@ function refresh(m) {
     return checked ? (auto || { key: r.key, level: r.severity, label: r.label, automatic: false }) : null;
   }).filter(Boolean);
 
-  // 保留 aiAssessed 标记（recompute 返回新对象会丢弃）
-  const wasAssessed = m.analysis.aiAssessed === true;
+  // 保留 AI 审核字段（recompute 返回新对象会丢弃非 JEV 键）
+  const prevAI = m.analysis.aiAssessed ? {
+    aiAssessed: true,
+    aiRecommendation: m.analysis.aiRecommendation,
+    aiRecommendReason: m.analysis.aiRecommendReason,
+    aiProvider: m.analysis.aiProvider
+  } : null;
   m.analysis = recomputeAnalysis(
     { hook, engagement, value, policy: { score: 9, risks } },
     m.basic, model
   );
-  m.analysis.aiAssessed = wasAssessed;
+  if (prevAI) Object.assign(m.analysis, prevAI);
   m.analysis.tags = buildTags(m, m.analysis, m.basic, m.custom);
   m.timeline = buildTimeline(m.basic, m.analysis);
   m.updatedAt = Date.now();
@@ -496,6 +501,30 @@ const PORT = process.env.PORT || 8700;
 for (const row of db.prepare(`SELECT * FROM materials WHERE status='active'`).all()) {
   try { const m = rowToMaterial(row); refresh(m); saveMaterial(m); } catch {}
 }
+// 一次性修复：已评估但推荐值丢失的存量素材（按分数+风险确定性重推）
+let repaired = 0;
+for (const row of db.prepare(`SELECT * FROM materials WHERE status='active'`).all()) {
+  try {
+    const m = rowToMaterial(row);
+    const a = m.analysis;
+    if (!a.aiAssessed || a.aiRecommendation) continue;
+    const risks = (a.policy && a.policy.risks) || [];
+    const hasCritical = risks.some(r => r.level === 'critical');
+    const avg = ((a.hook?.score || 0) + (a.engagement?.score || 0) + (a.value?.score || 0)) / 3;
+    a.aiRecommendation = hasCritical ? 'reject' : avg >= 7 ? 'keep' : avg >= 4.5 ? 'review' : 'reject';
+    a.aiRecommendReason = hasCritical
+      ? '存在关键合规风险（历史数据恢复推导）'
+      : a.aiRecommendation === 'keep'
+        ? 'J/E/V 三维均强势，质量达标（历史数据恢复推导）'
+        : a.aiRecommendation === 'review'
+          ? '三维中等，建议人工复核（历史数据恢复推导）'
+          : '三维偏弱，建议淘汰（历史数据恢复推导）';
+    a.aiProvider = 'recovered';
+    saveMaterial(m);
+    repaired++;
+  } catch {}
+}
+if (repaired) console.log(`已修复 ${repaired} 条丢失 AI 推荐值的素材记录`);
 app.listen(PORT, async () => {
   const caps = await capabilities();
   console.log(`JEV Creative Workbench 已启动: http://localhost:${PORT}`);
