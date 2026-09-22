@@ -602,7 +602,7 @@ function bulkItemHTML(m) {
       ${img}
       <span class="bulk-score badge-${effGrade(m)}">${fmt(m.analysis.composite)}</span>
       ${sel ? '<span class="bulk-check">✓</span>' : ''}
-      <span class="scan-dot"></span>
+      <span class="scan-light" title="未扫描"></span>
       <span class="st st-${st === 'keep' ? 'go' : st === 'reject' ? 'no' : 'cond'}"></span>
     </div>`;
 }
