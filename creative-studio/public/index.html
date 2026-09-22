@@ -42,60 +42,131 @@
 
   <!-- ============ 主布局 ============ -->
   <div class="layout">
-    <!-- 左侧筛选面板（可折叠） -->
+    <!-- 左侧筛选面板：智能筛选指挥台（可折叠） -->
     <aside class="fpanel" id="fpanel">
       <div class="fpanel-head">
-        <b>筛选素材</b>
-        <button class="tcloud-clear" id="fClear">清空</button>
+        <div class="fp-title">
+          <span class="fp-ico">◧</span>
+          <div class="fp-title-text">
+            <b>筛选指挥台</b>
+            <small>FILTER CONSOLE</small>
+          </div>
+        </div>
+        <button class="tcloud-clear" id="fClear">重置</button>
       </div>
 
-      <div class="fgroup">
-        <label>评级</label>
-        <div class="chips" id="fGrades"></div>
-      </div>
-      <div class="fgroup">
-        <label>得分区间</label>
-        <div class="range-inputs">
-          <input id="fMin" type="number" min="0" max="100" placeholder="0">
-          <span>—</span>
-          <input id="fMax" type="number" min="0" max="100" placeholder="100">
+      <!-- 场景快捷筛片：运营工作流一键入口 -->
+      <div class="fp-scenes">
+        <div class="fp-scene" data-preset="todo" onclick="applyPreset('todo')">
+          <span class="fp-scene-ico">⏳</span>
+          <div class="fp-scene-meta"><b>待审优先</b><small>未过审素材</small></div>
+          <em class="fp-scene-n" id="psTodo">0</em>
+        </div>
+        <div class="fp-scene" data-preset="risk" onclick="applyPreset('risk')">
+          <span class="fp-scene-ico">⚠</span>
+          <div class="fp-scene-meta"><b>合规风险</b><small>命中违规项</small></div>
+          <em class="fp-scene-n" id="psRisk">0</em>
+        </div>
+        <div class="fp-scene" data-preset="top" onclick="applyPreset('top')">
+          <span class="fp-scene-ico">★</span>
+          <div class="fp-scene-meta"><b>S/A 高分</b><small>头部素材</small></div>
+          <em class="fp-scene-n" id="psTop">0</em>
+        </div>
+        <div class="fp-scene" data-preset="goable" onclick="applyPreset('goable')">
+          <span class="fp-scene-ico">✓</span>
+          <div class="fp-scene-meta"><b>全渠道可投</b><small>三平台 GO</small></div>
+          <em class="fp-scene-n" id="psGo">0</em>
         </div>
       </div>
-      <div class="fgroup">
-        <label>审片状态</label>
-        <div class="chips" id="fReview"></div>
-      </div>
-      <div class="fgroup">
-        <label>品类</label>
-        <div class="checks scroll" id="fCats" style="max-height:132px"></div>
-      </div>
-      <div class="fgroup">
-        <label>素材类型</label>
-        <div class="checks" id="fMedia"></div>
-      </div>
-      <div class="fgroup">
-        <label>渠道可投</label>
-        <div class="checks" id="fChannels"></div>
-      </div>
-      <div class="fgroup">
-        <label>仅看风险</label>
-        <label class="check-row"><input type="checkbox" id="fRiskOnly" style="width:auto"><span class="cr-label">只显示命中合规风险的素材</span></label>
-      </div>
-      <div class="fgroup">
-        <label>出镜类型</label>
-        <div class="checks" id="fActors"></div>
-      </div>
-      <div class="fgroup">
-        <label>Hook 类型</label>
-        <div class="checks scroll" id="fHooks"></div>
-      </div>
-      <div class="fgroup">
-        <label>标签</label>
-        <div class="checks scroll tags" id="fTags"></div>
+
+      <!-- 手风琴筛选组 -->
+      <div class="facc">
+        <div class="acc">
+          <button class="acc-head" type="button" onclick="toggleAcc(this)">
+            <span class="acc-title">评级</span><span class="acc-badge" id="gBadgeGrades"></span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="acc-body"><div class="acc-body-inner"><div class="chips" id="fGrades"></div></div></div>
+        </div>
+
+        <div class="acc">
+          <button class="acc-head" type="button" onclick="toggleAcc(this)">
+            <span class="acc-title">审片状态</span><span class="acc-badge" id="gBadgeReview"></span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="acc-body"><div class="acc-body-inner"><div class="chips" id="fReview"></div></div></div>
+        </div>
+
+        <div class="acc">
+          <button class="acc-head" type="button" onclick="toggleAcc(this)">
+            <span class="acc-title">得分区间</span><span class="acc-badge" id="gBadgeScore"></span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="acc-body"><div class="acc-body-inner">
+            <div class="range-inputs">
+              <input id="fMin" type="number" min="0" max="100" placeholder="0">
+              <span>—</span>
+              <input id="fMax" type="number" min="0" max="100" placeholder="100">
+            </div>
+          </div></div>
+        </div>
+
+        <div class="acc closed">
+          <button class="acc-head" type="button" onclick="toggleAcc(this)">
+            <span class="acc-title">品类</span><span class="acc-badge" id="gBadgeCats"></span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="acc-body"><div class="acc-body-inner"><div class="checks scroll" id="fCats" style="max-height:150px"></div></div></div>
+        </div>
+
+        <div class="acc closed">
+          <button class="acc-head" type="button" onclick="toggleAcc(this)">
+            <span class="acc-title">素材类型</span><span class="acc-badge" id="gBadgeMedia"></span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="acc-body"><div class="acc-body-inner"><div class="checks" id="fMedia"></div></div></div>
+        </div>
+
+        <div class="acc closed">
+          <button class="acc-head" type="button" onclick="toggleAcc(this)">
+            <span class="acc-title">渠道可投</span><span class="acc-badge" id="gBadgeChannels"></span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="acc-body"><div class="acc-body-inner"><div class="checks" id="fChannels"></div></div></div>
+        </div>
+
+        <div class="acc">
+          <button class="acc-head" type="button" onclick="toggleAcc(this)">
+            <span class="acc-title">仅看风险</span><span class="acc-badge" id="gBadgeRisk"></span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="acc-body"><div class="acc-body-inner">
+            <label class="check-row"><input type="checkbox" id="fRiskOnly" style="width:auto"><span class="cr-label">只显示命中合规风险的素材</span></label>
+          </div></div>
+        </div>
+
+        <div class="acc closed">
+          <button class="acc-head" type="button" onclick="toggleAcc(this)">
+            <span class="acc-title">出镜类型</span><span class="acc-badge" id="gBadgeActors"></span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="acc-body"><div class="acc-body-inner"><div class="checks" id="fActors"></div></div></div>
+        </div>
+
+        <div class="acc closed">
+          <button class="acc-head" type="button" onclick="toggleAcc(this)">
+            <span class="acc-title">Hook 类型</span><span class="acc-badge" id="gBadgeHooks"></span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="acc-body"><div class="acc-body-inner"><div class="checks scroll" id="fHooks"></div></div></div>
+        </div>
+
+        <div class="acc closed">
+          <button class="acc-head" type="button" onclick="toggleAcc(this)">
+            <span class="acc-title">标签</span><span class="acc-badge" id="gBadgeTags"></span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="acc-body"><div class="acc-body-inner"><div class="checks scroll tags" id="fTags"></div></div></div>
+        </div>
       </div>
 
+      <!-- 底部命中仪表 -->
       <div class="fpanel-foot">
-        <span id="fSummary">当前未筛选</span>
+        <div class="fp-meter"><div class="fp-meter-bar" id="fMeterBar"></div></div>
+        <div class="fp-meta">
+          <span class="fp-meta-n">命中 <b id="fMeterCount">0</b>/<b id="fMeterTotal">0</b></span>
+          <span class="fp-meta-s" id="fSummary">显示全部素材</span>
+        </div>
       </div>
     </aside>
 

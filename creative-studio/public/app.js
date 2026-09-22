@@ -227,13 +227,73 @@ function renderPanel() {
   if (F.tags.size) parts.push('标签×' + F.tags.size);
   if (F.riskOnly) parts.push('仅风险素材');
   if (F.minScore > 0 || F.maxScore < 100) parts.push(`${F.minScore}-${F.maxScore} 分`);
-  $('fSummary').innerHTML = parts.length ? `已选 <b>${parts.length}</b> 项：${parts.join(' · ')}` : '当前未筛选（显示全部素材）';
+  $('fSummary').textContent = parts.length ? parts.join(' · ') : '显示全部素材';
+  // 底部命中仪表
+  const hitN = filtered().length;
+  $('fMeterCount').textContent = hitN;
+  $('fMeterTotal').textContent = MATERIALS.length;
+  $('fMeterBar').style.width = MATERIALS.length ? (hitN / MATERIALS.length * 100).toFixed(1) + '%' : '0%';
+  // 组激活徽章
+  const badges = {
+    Grades: F.grades.size, Review: F.review.size,
+    Score: (F.minScore > 0 || F.maxScore < 100) ? 1 : 0,
+    Cats: F.categories.size, Media: F.media.size, Channels: F.channels.size,
+    Risk: F.riskOnly ? 1 : 0, Actors: F.actors.size, Hooks: F.hooks.size, Tags: F.tags.size
+  };
+  for (const [k, n] of Object.entries(badges)) {
+    const el = $('gBadge' + k);
+    if (el) { el.textContent = n; el.classList.toggle('show', n > 0); }
+  }
+  renderPresets();
 }
-function clearFilters() {
+
+// ---- 场景快捷筛片：运营工作流一键入口 ----
+function presetActive(id) {
+  const otherEmpty = () => !F.q && F.minScore === 0 && F.maxScore === 100 &&
+    F.media.size === 0 && F.actors.size === 0 && F.hooks.size === 0 && F.tags.size === 0 && F.categories.size === 0;
+  if (id === 'risk') return F.riskOnly && otherEmpty();
+  if (!otherEmpty() || F.riskOnly) return false;
+  if (id === 'todo') return F.review.size === 1 && F.review.has('todo');
+  if (id === 'top') return F.grades.size === 2 && F.grades.has('S') && F.grades.has('A');
+  if (id === 'goable') return F.channels.size === 3;
+  return false;
+}
+function renderPresets() {
+  $('psTodo').textContent = MATERIALS.filter(m => revOf(m) === 'todo').length;
+  $('psRisk').textContent = MATERIALS.filter(policyRiskCount).length;
+  $('psTop').textContent = MATERIALS.filter(m => ['S', 'A'].includes(effGrade(m))).length;
+  $('psGo').textContent = MATERIALS.filter(m => ['google', 'meta', 'tiktok'].every(k => m.analysis.platforms?.[k]?.verdict === 'GO')).length;
+  document.querySelectorAll('.fp-scene').forEach(el => el.classList.toggle('on', presetActive(el.dataset.preset)));
+}
+function applyPreset(id) {
+  const wasActive = presetActive(id);
+  resetFilterState();
+  if (wasActive) { renderPanel(); renderStats(); renderMain(); return; }
+  if (id === 'todo') F.review.add('todo');
+  else if (id === 'risk') { F.riskOnly = true; $('fRiskOnly').checked = true; }
+  else if (id === 'top') { F.grades.add('S'); F.grades.add('A'); }
+  else if (id === 'goable') { F.channels.add('google'); F.channels.add('meta'); F.channels.add('tiktok'); }
+  renderPanel(); renderStats(); renderMain();
+}
+
+// ---- 手风琴折叠 ----
+function toggleAcc(head) {
+  const acc = head.closest('.acc');
+  const wasClosed = acc.classList.contains('closed');
+  acc.classList.toggle('closed', !wasClosed);
+  const on = acc.querySelector('.acc-badge')?.textContent;
+  acc.classList.toggle('on', !!on);
+}
+
+// 重置筛选状态（不渲染，供 clearFilters / applyPreset 复用）
+function resetFilterState() {
   F.q = ''; F.grades.clear(); F.categories.clear(); F.review.clear(); F.media.clear(); F.channels.clear();
   F.actors.clear(); F.hooks.clear(); F.tags.clear();
   F.minScore = 0; F.maxScore = 100; F.riskOnly = false;
   $('searchBox').value = ''; $('fMin').value = ''; $('fMax').value = ''; $('fRiskOnly').checked = false;
+}
+function clearFilters() {
+  resetFilterState();
   renderPanel(); renderStats(); renderMain();
 }
 
