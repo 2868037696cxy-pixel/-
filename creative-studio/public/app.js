@@ -308,8 +308,136 @@ function clearFilters() {
 
 // ---------------- 渲染 ----------------
 function render() {
-  renderStats(); renderPanel(); renderMain();
+  renderKPI(); renderStats(); renderPanel(); renderMain();
 }
+
+// ---- 全局 KPI 统计条（AI 引擎监控） ----
+let kpiStart = Date.now();
+function renderKPI() {
+  const n = MATERIALS.length;
+  $('kpiAds').textContent = n;
+  const judged = MATERIALS.filter(m => m.analysis.aiAssessed).length;
+  $('kpiJudged').textContent = judged;
+  const advs = new Set(MATERIALS.map(m => m.custom?.category).filter(Boolean)).size;
+  $('kpiAdvertisers').textContent = advs;
+  const sec = Math.max(1, Math.floor((Date.now() - kpiStart) / 1000));
+  $('kpiJps').textContent = (judged / sec).toFixed(1);
+  const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+  const ss = String(sec % 60).padStart(2, '0');
+  $('kpiElapsed').textContent = mm + ':' + ss;
+  $('kpiCost').textContent = '$' + (judged * 0.0025).toFixed(2);
+}
+setInterval(renderKPI, 1000);
+
+// ---- 右侧三段式分析面板 ----
+function renderAnalytics(list) {
+  renderTeardown(selectedId ? cur() : (list[0] || null));
+  renderCategoryPanel(list);
+  renderNeedsHuman(list);
+}
+
+// 归因维度打分（0-100），映射现有 JEV 字段
+function attributionOf(m) {
+  const a = m.analysis, b = m.basic;
+  const fmtScore = k => Math.round(k * 10);
+  const dims = [];
+  dims.push({ key: 'Hook Archetype', label: a.hook?.hookType || '—', val: fmtScore(a.hook?.visualImpact || a.hook?.score || 5), hint: '钩子原型 & 视觉冲击' });
+  const asp = b.aspect || '';
+  const aspScore = asp === '9:16' ? 86 : asp === '1:1' ? 74 : asp === '16:9' ? 68 : 60;
+  dims.push({ key: 'Format', label: (b.mediaType === 'video' ? 'Video' : 'Image') + (asp ? ' · ' + asp : ''), val: Math.min(100, aspScore + (b.resolution === '4K' ? 10 : b.resolution === 'FHD' ? 6 : 0)), hint: '广告形式 / 画幅 / 画质' });
+  const offerScore = { '买一送一': 92, '限时折扣': 84, '免费送货': 78, '满减优惠': 80, '新品首发': 74, '无促销': 46 }[a.value?.offer] ?? 55;
+  dims.push({ key: 'Offer', label: a.value?.offer || '—', val: offerScore, hint: '优惠吸引力' });
+  let aware = a.engagement?.actor ? (['欧美真人', '亚洲真人'].includes(a.engagement.actor) ? 82 : a.engagement.actor === '无真人' ? 58 : 66) : 55;
+  if ((a.engagement?.trust || []).includes('UGC真人出镜')) aware += 8;
+  dims.push({ key: 'Awareness', label: aware >= 75 ? '高认知 · 需求明确' : aware >= 60 ? '中认知 · 痛点引导' : '低认知 · 需教育', val: Math.min(100, aware), hint: '用户认知阶段' });
+  dims.push({ key: 'Driver', label: a.engagement?.painPoint || '痛点未显性', val: a.engagement?.painPoint ? fmtScore(a.engagement.score || 5) : 38, hint: '痛点驱动' });
+  dims.push({ key: 'Funnel', label: a.value?.ctaText || 'CTA 未标注', val: fmtScore(a.value?.ctaScore || 6), hint: '转化漏斗 / CTA 力度' });
+  const dur = ((a.engagement?.sceneRealism || 5) + (a.engagement?.demoClarity || 5)) / 2;
+  dims.push({ key: 'Durability', label: a.engagement?.beforeAfter ? '前后对比 · 强说服' : '常规素材', val: Math.min(100, fmtScore(dur) + (a.engagement?.beforeAfter ? 8 : 0)), hint: '长期投放耐耗度' });
+  return dims;
+}
+function renderTeardown(m) {
+  const box = $('teardown');
+  if (!m) { box.innerHTML = '<div class="td-empty">◈ 点击左侧素材查看 AI 归因拆解</div>'; return; }
+  const a = m.analysis, b = m.basic;
+  const src = thumbOf(m);
+  const preview = !src ? '<div class="td-preview-ph">🗂️</div>'
+    : b.mediaType === 'video'
+      ? `<video src="${m.ref}" poster="${b.poster || ''}" muted loop preload="metadata" onmouseenter="this.play()" onmouseleave="this.pause();this.currentTime=0"></video>`
+      : `<img src="${src}" loading="lazy" alt="">`;
+  const dims = attributionOf(m).map(d => {
+    const c = d.val >= 75 ? 'var(--ok)' : d.val >= 55 ? 'var(--accent)' : 'var(--warn)';
+    return `<div class="td-dim"><div class="td-dim-head"><span class="td-dim-key">${d.key}</span><span class="td-dim-val">${Math.round(d.val)}</span></div>
+      <div class="td-bar"><i style="width:${d.val}%;background:${c}"></i></div>
+      <div class="td-dim-hint">${esc(d.label)} · ${d.hint}</div></div>`;
+  }).join('');
+  box.innerHTML = `
+    <div class="td-grid">
+      <div class="td-preview">${preview}</div>
+      <div class="td-preview-meta">
+        <div class="td-name">${esc(m.name)}</div>
+        <div class="td-sub">${b.mediaType === 'video' ? '🎬 视频' : '🖼️ 单图'} · ${b.aspect || '?'}${b.durationSec ? ' · ' + b.durationSec + 's' : ''} · ${b.resolution || '?'}</div>
+        <div class="td-score" style="background:${GCOLOR[effGrade(m)]}"><b>${fmt(a.composite)}</b><span>JEV</span></div>
+        <div class="td-verdict">${['google', 'meta', 'tiktok'].map(k => { const p = a.platforms?.[k]; return p ? `<span class="vchip ${p.verdict === 'GO' ? 'g' : p.verdict === 'COND' ? 'y' : 'r'}"><i>${CH_ICON[k]}</i>${p.verdict}</span>` : ''; }).join('')}</div>
+        <button class="td-cta">${esc(a.value?.ctaText || '立即购买')}</button>
+      </div>
+    </div>
+    <div class="td-attrib">${dims}</div>`;
+}
+
+// 品类大盘：三组水平柱状图（Hook / Format / Awareness）
+function renderCategoryPanel(list) {
+  const box = $('theCategory');
+  if (!list.length) { box.innerHTML = '<div class="cat-empty">暂无数据</div>'; return; }
+  const n = Math.max(1, list.length);
+  const hookC = countBy(m => m.analysis.hook?.hookType || '无明确钩子');
+  const hookTop = Object.entries(hookC).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const fmtC = {};
+  for (const m of list) { const k = (m.basic.mediaType === 'video' ? '视频' : '单图') + (m.basic.aspect ? ' ' + m.basic.aspect : ''); fmtC[k] = (fmtC[k] || 0) + 1; }
+  const fmtTop = Object.entries(fmtC).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const awC = {};
+  for (const m of list) {
+    const act = m.analysis.engagement?.actor;
+    const k = ['欧美真人', '亚洲真人'].includes(act) ? '真人信任' : act === '无真人' ? '产品展示' : act || '未标注';
+    awC[k] = (awC[k] || 0) + 1;
+  }
+  const awTop = Object.entries(awC).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const bars = (title, data) => {
+    const max = Math.max(1, ...data.map(d => d[1]));
+    return `<div class="cat-group"><div class="cat-group-title">${title}</div>
+      ${data.map(([k, v]) => `<div class="cat-row"><span class="cat-lbl">${esc(k)}</span><div class="cat-bar"><i style="width:${v / max * 100}%;background:var(--accent)"></i></div><b class="cat-n">${v}</b></div>`).join('') || '<div class="cat-row subtle">暂无</div>'}
+    </div>`;
+  };
+  box.innerHTML = `<div class="cat-sum">当前 <b>${n}</b> 条广告的宏观特征分布</div>` +
+    bars('HOOK 钩子类型', hookTop) +
+    bars('FORMAT 广告形式', fmtTop) +
+    bars('AWARENESS 用户认知', awTop);
+}
+
+// 人机协同：需要人工复核的素材
+function renderNeedsHuman(list) {
+  const box = $('needsHuman');
+  const candidates = list.filter(m => {
+    if (m.analysis.aiAssessed && m.analysis.aiRecommendation === 'review') return true;
+    if (policyRiskCount(m) > 0) return true;
+    return false;
+  });
+  if (!candidates.length) {
+    box.innerHTML = '<div class="nh-done">✓ 当前筛选范围内无需人工复核</div>';
+    return;
+  }
+  box.innerHTML = candidates.slice(0, 24).map(m => {
+    const risk = policyRiskCount(m);
+    const flag = m.analysis.aiAssessed && m.analysis.aiRecommendation === 'review' ? 'TOO CLOSE TO CALL' : '合规风险';
+    const conf = risk > 0 ? Math.max(30, 70 - risk * 12) : 62;
+    return `<button class="nh-chip ${risk ? 'risk' : ''}" onclick="openDrawer('${m.id}')">
+      <span class="nh-flag">${flag}</span>
+      <span class="nh-name">${esc(m.name)}</span>
+      <span class="nh-conf">${conf}%</span>
+    </button>`;
+  }).join('');
+}
+
 function renderStats() {
   const n = MATERIALS.length;
   $('statTotal').textContent = n;
@@ -370,6 +498,8 @@ function renderMain() {
   const list = filtered();
   $('hitCount').textContent = list.length;
   $('totalCount').textContent = MATERIALS.length;
+  $('adsCount').textContent = list.length;
+  $('adsTotal').textContent = MATERIALS.length;
   const none = list.length === 0;
   $('empty').classList.toggle('hidden', !none);
   $('emptyText').textContent = MATERIALS.length === 0 ? '素材库为空' : '没有符合条件的素材';
@@ -377,6 +507,7 @@ function renderMain() {
   else if (view === 'review') renderReview(list);
   else if (view === 'cats') renderCategoryView(list);
   else renderKanban(list);
+  renderAnalytics(list);
 }
 function renderGrid(list) {
   $('kanban').classList.add('hidden');
@@ -908,6 +1039,7 @@ function setView(v) {
   if (v === 'review') reviewIdx = 0;   // 进入审片模式从头开始
   document.querySelectorAll('.navitem[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === v));
   $('boardBy').classList.toggle('hidden', v !== 'kanban');
+  $('wsViewLabel').textContent = { grid: '素材墙', review: '审片扫描', cats: '分类状态', kanban: '分类看板' }[v] || '';
   renderMain();
 }
 function setBoardBy(v) { boardBy = v; renderKanban(filtered()); }
@@ -986,6 +1118,7 @@ async function onKDrop(ev) {
 function openDrawer(id) {
   selectedId = id;
   renderDrawer();
+  renderTeardown(cur());
   $('drawerBackdrop').classList.remove('hidden');
   $('drawer').classList.remove('hidden');
 }

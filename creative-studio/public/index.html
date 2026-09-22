@@ -40,6 +40,16 @@
     </div>
   </header>
 
+  <!-- ============ 全局 KPI 统计条（AI 引擎监控） ============ -->
+  <div class="kpi-strip" id="kpiStrip">
+    <div class="kpi"><b id="kpiAds">0</b><span>ADS READ</span><i>素材处理总量</i></div>
+    <div class="kpi"><b id="kpiJudged">0</b><span>TYPED JUDGMENTS</span><i>标注判定总数</i></div>
+    <div class="kpi"><b id="kpiAdvertisers">0</b><span>ADVERTISERS</span><i>品牌 / 品类数</i></div>
+    <div class="kpi live"><b id="kpiJps">0.0</b><span>JUDGMENTS / SEC</span><i>AI 处理速度</i></div>
+    <div class="kpi"><b id="kpiElapsed">00:00</b><span>ELAPSED</span><i>本次运行耗时</i></div>
+    <div class="kpi"><b id="kpiCost">$0.00</b><span>COST SO FAR</span><i>API 实时调用成本</i></div>
+  </div>
+
   <!-- ============ 主布局 ============ -->
   <div class="layout">
     <!-- 左侧导航中枢 + 情境筛选（可折叠） -->
@@ -219,7 +229,7 @@
       </div>
     </aside>
 
-    <!-- 右侧工作区 -->
+    <!-- 右侧工作区：6:4 Master-Detail -->
     <div class="maincol">
       <section class="results-bar">
         <button class="btn fpanel-toggle" id="btnToggleFilter" title="收起/展开侧边栏">☰</button>
@@ -239,14 +249,48 @@
         </div>
       </section>
 
-      <main id="grid" class="grid"></main>
-      <main id="review" class="review hidden"></main>
-      <main id="cats" class="catsview hidden"></main>
-      <main id="kanban" class="kanban hidden"></main>
-      <div id="empty" class="empty hidden">
-        <div class="empty-icon">🔍</div>
-        <p id="emptyText">没有符合条件的素材</p>
-        <p class="muted">试试调整左侧筛选条件，或点击右上角「导入素材」建立素材库</p>
+      <div class="workspace">
+        <!-- 左：主视觉素材阵列 -->
+        <div class="ws-left">
+          <div class="ws-left-head">
+            <span class="ws-ads">ADS <b id="adsCount">0</b> / <b id="adsTotal">0</b></span>
+            <span class="ws-viewlabel" id="wsViewLabel">素材墙</span>
+          </div>
+          <div class="ws-scroll">
+            <main id="grid" class="grid"></main>
+            <main id="review" class="review hidden"></main>
+            <main id="cats" class="catsview hidden"></main>
+            <main id="kanban" class="kanban hidden"></main>
+            <div id="empty" class="empty hidden">
+              <div class="empty-icon">🔍</div>
+              <p id="emptyText">素材库为空</p>
+              <div class="muted">导入素材后自动评分分类</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右：三段式分析面板 -->
+        <aside class="ws-right" id="wsRight">
+          <div class="anal-panel">
+            <div class="anal-head"><span class="anal-tag">TEARDOWN</span><span class="anal-sub">单素材深度拆解</span></div>
+            <div id="teardown" class="teardown">
+              <div class="td-empty">◈ 点击左侧素材查看 AI 归因拆解</div>
+            </div>
+          </div>
+
+          <div class="anal-panel">
+            <div class="anal-head"><span class="anal-tag">THE CATEGORY</span><span class="anal-sub">品类大盘宏观分析</span></div>
+            <div id="theCategory" class="category-panel"></div>
+          </div>
+
+          <div class="anal-panel">
+            <div class="anal-head">
+              <span class="anal-tag warn">NEEDS A HUMAN</span>
+              <span class="anal-sub">人机协同 · 人工复核兜底</span>
+            </div>
+            <div id="needsHuman" class="needs-human"></div>
+          </div>
+        </aside>
       </div>
     </div>
   </div>
