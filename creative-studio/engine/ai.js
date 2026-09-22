@@ -192,5 +192,21 @@ export async function analyzeWithTypeSafe(material) {
       value: a.value_score?.confidence ?? null
     }
   };
+
+  // AI 审核建议：任一违规 → 淘汰；三维强势 → 通过；否则 → 人工复核
+  const risks = [result.policy.riskHealth, result.policy.riskMislead, result.policy.riskPolicy];
+  const hasRisk = risks.some(Boolean);
+  const avg = (result.hook.score + result.engagement.score + result.value.score) / 3;
+  if (hasRisk) result.recommendation = 'reject';
+  else if (avg >= 7) result.recommendation = 'keep';
+  else if (avg >= 4.5) result.recommendation = 'review';
+  else result.recommendation = 'reject';
+  result.recommendReason = hasRisk
+    ? '检测到合规风险项（医疗夸大/虚假承诺/政策违规）'
+    : result.recommendation === 'keep'
+      ? 'J/E/V 三维均强势，质量达标'
+      : result.recommendation === 'review'
+        ? '三维中等，建议人工复核关键短板'
+        : '三维偏弱，建议淘汰或重构';
   return result;
 }

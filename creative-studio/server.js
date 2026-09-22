@@ -274,50 +274,103 @@ app.delete('/api/materials/:id', (req, res) => {
 });
 
 // ---- AI 评测（TypeSafe System One / Jev 模型，需 TYPESAFE_API_KEY） ----
+// 把 TypeSafe 结果回填素材并落库（单条/批量共用）
+async function applyAIResult(m, result) {
+  if (result.hook?.score != null) m.analysis.hook.score = result.hook.score;
+  if (result.engagement?.score != null) m.analysis.engagement.score = result.engagement.score;
+  if (result.value?.score != null) m.analysis.value.score = result.value.score;
+  if (result.value?.ctaScore != null) m.analysis.value.ctaScore = result.value.ctaScore;
+
+  const isDefault = (v, defs) => !v || defs.includes(v);
+  if (result.hook?.hookType && isDefault(m.analysis.hook.hookType, ['无明确钩子'])) {
+    m.analysis.hook.hookType = result.hook.hookType;
+  }
+  if (result.engagement?.actor && isDefault(m.analysis.engagement.actor, ['无真人'])) {
+    m.analysis.engagement.actor = result.engagement.actor;
+  }
+  if (result.engagement?.scene && isDefault(m.analysis.engagement.scene, ['室内'])) {
+    m.analysis.engagement.scene = result.engagement.scene;
+  }
+  if (result.engagement?.beforeAfter != null && !m.analysis.engagement.beforeAfter) {
+    m.analysis.engagement.beforeAfter = result.engagement.beforeAfter;
+  }
+
+  // AI 审核建议（keep / review / reject）+ 理由
+  m.analysis.aiRecommendation = result.recommendation || 'review';
+  m.analysis.aiRecommendReason = result.recommendReason || '';
+  m.analysis.aiAssessed = true;
+
+  // 合规风险：Noul 判定 → riskState 勾选（critical 类）
+  const riskState = m.custom.riskState || {};
+  const RULES = { riskHealth: 'health', riskMislead: 'mislead', riskPolicy: 'adult' };
+  for (const [k, ruleKey] of Object.entries(RULES)) {
+    if (result.policy?.[k] === true) riskState[ruleKey] = true;
+  }
+  m.custom.riskState = riskState;
+
+  refresh(m);
+  saveMaterial(m);
+  return m;
+}
+
+// 带限流退避的 TypeSafe 调用（429/529 → 指数退避重试）
+async function callTypeSafeWithRetry(material, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await analyzeWithTypeSafe(material);
+    } catch (e) {
+      const isRate = /429|529|Too Many|Overloaded/.test(e.message);
+      if (!isRate || i >= retries) throw e;
+      await new Promise(r => setTimeout(r, 1200 * Math.pow(2, i)));
+    }
+  }
+  return null;
+}
+
 app.post('/api/analyze/:id', async (req, res) => {
   const m = getMaterial(req.params.id);
   if (!m) return res.status(404).json({ error: 'not found' });
   if (!aiAvailable()) return res.status(200).json({ ai: false, message: '未配置 TYPESAFE_API_KEY，当前使用本地启发式评分。' });
   try {
-    const result = await analyzeWithTypeSafe(m);
+    const result = await callTypeSafeWithRetry(m);
     if (!result) return res.status(200).json({ ai: false, message: 'TypeSafe 评测未返回有效结果' });
-
-    // 回填 J/E/V 分数类字段（AI 权威判断）
-    if (result.hook?.score != null) m.analysis.hook.score = result.hook.score;
-    if (result.engagement?.score != null) m.analysis.engagement.score = result.engagement.score;
-    if (result.value?.score != null) m.analysis.value.score = result.value.score;
-    if (result.value?.ctaScore != null) m.analysis.value.ctaScore = result.value.ctaScore;
-
-    // 视觉/分类字段：仅当用户尚未标注（仍是启发式默认值）时由 AI 补充
-    const isDefault = (v, defs) => !v || defs.includes(v);
-    if (result.hook?.hookType && isDefault(m.analysis.hook.hookType, ['无明确钩子'])) {
-      m.analysis.hook.hookType = result.hook.hookType;
-    }
-    if (result.engagement?.actor && isDefault(m.analysis.engagement.actor, ['无真人'])) {
-      m.analysis.engagement.actor = result.engagement.actor;
-    }
-    if (result.engagement?.scene && isDefault(m.analysis.engagement.scene, ['室内'])) {
-      m.analysis.engagement.scene = result.engagement.scene;
-    }
-    if (result.engagement?.beforeAfter != null && !m.analysis.engagement.beforeAfter) {
-      m.analysis.engagement.beforeAfter = result.engagement.beforeAfter;
-    }
-    m.analysis.aiAssessed = true;
-
-    // 合规风险：Noul 判定 → riskState 勾选（critical 类）
-    const riskState = m.custom.riskState || {};
-    const RULES = { riskHealth: 'health', riskMislead: 'mislead', riskPolicy: 'adult' };
-    for (const [k, ruleKey] of Object.entries(RULES)) {
-      if (result.policy?.[k] === true) riskState[ruleKey] = true;
-    }
-    m.custom.riskState = riskState;
-
-    refresh(m);
-    saveMaterial(m);
-    res.json({ ai: true, provider: 'typesafe', confidence: result.confidence, material: m });
+    const updated = await applyAIResult(m, result);
+    res.json({ ai: true, provider: 'typesafe', recommendation: result.recommendation, confidence: result.confidence, material: updated });
   } catch (e) {
     res.status(500).json({ ai: false, error: e.message });
   }
+});
+
+// ---- 批量 AI 评测（并发 + 逐条落库 + 进度） ----
+app.post('/api/analyze-batch', async (req, res) => {
+  const { ids = [], concurrency = 3 } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: '缺少 ids' });
+  if (!aiAvailable()) return res.status(200).json({ ai: false, message: '未配置 TYPESAFE_API_KEY' });
+
+  const queue = ids.map(id => getMaterial(id)).filter(Boolean);
+  const done = [];
+  const failed = [];
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < queue.length) {
+      const idx = cursor++;
+      const m = queue[idx];
+      try {
+        const result = await callTypeSafeWithRetry(m);
+        if (result) {
+          await applyAIResult(m, result);
+          done.push({ id: m.id, name: m.name, recommendation: result.recommendation });
+        } else {
+          failed.push({ id: m.id, name: m.name, error: '无有效结果' });
+        }
+      } catch (e) {
+        failed.push({ id: m.id, name: m.name, error: e.message.slice(0, 120) });
+      }
+    }
+  };
+  const workers = Array.from({ length: Math.max(1, Math.min(6, +concurrency || 3)) }, worker);
+  await Promise.all(workers);
+  res.json({ ai: true, total: queue.length, done: done.length, failed, doneList: done });
 });
 
 // ---- 模型与能力 ----
