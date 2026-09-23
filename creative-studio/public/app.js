@@ -698,6 +698,14 @@ function renderReview(list) {
   $('review').innerHTML = modebar + (revMode === 'bulk' ? reviewBulkHTML(list) : reviewSingleHTML(list));
 }
 
+// 审片按钮内联 SVG 图标（stroke 风格，随按钮 currentColor 变色）
+const RV_ICONS = {
+  prev: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg>',
+  next: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>',
+  check: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.6 3.4 3.4L13 4.6"/></svg>',
+  x: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="m4.5 4.5 7 7m0-7-7 7"/></svg>'
+};
+
 // 单张扫描模式主体
 function reviewSingleHTML(list) {
   const total = list.length;
@@ -722,12 +730,12 @@ function reviewSingleHTML(list) {
         ${frameHTML(m, reviewIdx, total)}
       </div>
       <div class="rv-actions">
-        <button class="rv-btn ghost" onclick="reviewStep(-1)">⏮ 上一张</button>
-        <button class="rv-btn reject" onclick="reviewAct('reject')">❌ 淘汰 (X)</button>
-        <button class="rv-btn keep" onclick="reviewAct('keep')">✅ 通过 (P)</button>
-        <button class="rv-btn ghost" onclick="reviewStep(1)">⏭ 下一张</button>
+        <button class="rv-btn ghost" data-kb="prev" onclick="reviewStep(-1)">${RV_ICONS.prev}<span>上一张</span><kbd>←</kbd></button>
+        <button class="rv-btn ghost" data-kb="next" onclick="reviewStep(1)">${RV_ICONS.next}<span>下一张</span><kbd>→</kbd></button>
+        <button class="rv-btn reject" data-kb="reject" onclick="reviewAct('reject')">${RV_ICONS.x}<span>淘汰</span><kbd>X</kbd></button>
+        <button class="rv-btn keep" data-kb="keep" onclick="reviewAct('keep')">${RV_ICONS.check}<span>通过</span><kbd>P</kbd></button>
       </div>
-      <div class="rv-hints">快捷键：← 上一张 · → 下一张 · P 通过 · X 淘汰 · 点击下方缩略图可跳转</div>
+      <div class="rv-hints">点击下方缩略图可跳转 · 按 <b>/</b> 快速搜索</div>
     </div>
     <aside class="review-side">${reviewSideHTML(m)}</aside>
   </div>
@@ -824,6 +832,15 @@ function stripHTML(list, cur) {
 }
 function reviewJump(i) { reviewIdx = i; renderReview(filtered()); }
 function reviewStep(d) { reviewIdx += d; renderReview(filtered()); }
+
+// 键盘判定后的按钮闪亮反馈（形成「按键 → 接收」视觉回路）
+function flashReviewBtn(key) {
+  const el = document.querySelector(`.rv-btn[data-kb="${key}"]`);
+  if (!el) return;
+  el.classList.remove('key-flash');
+  void el.offsetWidth;
+  el.classList.add('key-flash');
+}
 
 // ---------------- 批量棋盘模式（一个大框平铺 50/100 张批量扫选） ----------------
 function reviewBulkHTML(list) {
@@ -1056,7 +1073,7 @@ async function bulkAct(status) {
   renderPanel(); renderMain();
   toast(`✅ 已批量${status === 'keep' ? '通过' : '淘汰'} ${ids.length} 张`);
 }
-async function reviewAct(status) {
+async function reviewAct(status, fromKey) {
   const m = reviewQueue[reviewIdx];
   if (!m) return;
   const upd = await fetch('/api/materials/' + m.id, {
@@ -1068,6 +1085,7 @@ async function reviewAct(status) {
   const idx = updList.findIndex(x => x.id === m.id);
   reviewIdx = idx >= 0 ? idx + 1 : Math.min(reviewIdx, updList.length - 1);
   renderPanel(); renderMain();
+  if (fromKey) flashReviewBtn(status);
 }
 function reviewDoneHTML() {
   const all = MATERIALS;
@@ -1907,10 +1925,10 @@ document.addEventListener('keydown', e => {
   if (view === 'review' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) &&
       document.getElementById('drawer').classList.contains('hidden')) {
     if (revMode === 'single') {
-      if (e.key === 'ArrowRight') { e.preventDefault(); reviewStep(1); }
-      else if (e.key === 'ArrowLeft') { e.preventDefault(); reviewStep(-1); }
-      else if (e.key === 'p' || e.key === 'P') { reviewAct('keep'); }
-      else if (e.key === 'x' || e.key === 'X') { reviewAct('reject'); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); reviewStep(1); flashReviewBtn('next'); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); reviewStep(-1); flashReviewBtn('prev'); }
+      else if (e.key === 'p' || e.key === 'P') { reviewAct('keep', true); }
+      else if (e.key === 'x' || e.key === 'X') { reviewAct('reject', true); }
     } else {
       // 批量棋盘模式：方向键翻批
       if (e.key === 'ArrowRight') { e.preventDefault(); bulkPageGo(1); }
